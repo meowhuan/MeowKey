@@ -8,7 +8,7 @@ param(
     [switch]$DisableDebugHid,
     [switch]$Probe,
     [ValidateSet("none", "bootsel", "gpio")]
-    [string]$UserPresenceSource = "none",
+    [string]$UserPresenceSource = "bootsel",
     [int]$UserPresenceGpioPin = -1,
     [ValidateSet("low", "high")]
     [string]$UserPresenceGpioActiveState = "low",

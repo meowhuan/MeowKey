@@ -14,6 +14,7 @@ MeowKey 的跨平台原生调试管理器，当前基于 `Rust + egui/eframe`。
 - 列出固件凭据摘要
 - 清空诊断日志
 - 清空固件凭据存储
+- 已预留 UP 配置读写 transport，后续 UI 可直接接 `DIAG 5/6`
 - 原始 HID / CTAP 日志
 - 会话内凭据缓存
 

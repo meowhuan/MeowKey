@@ -13,7 +13,7 @@ use crate::{
     models::{
         AssertionForm, AssertionRequestSnapshot, AssertionResult, CredentialRecord, InfoSnapshot,
         InitDeviceVersion, InitSnapshot, MakeCredentialRequestSnapshot, MakeCredentialResult,
-        RegisterForm, SessionSnapshot,
+        RegisterForm, SessionSnapshot, UserPresenceConfigSnapshot,
     },
 };
 
@@ -34,6 +34,10 @@ const CTAPHID_INIT: u8 = 0x06;
 const CTAPHID_CBOR: u8 = 0x10;
 const CTAPHID_DIAG: u8 = 0x40;
 const CTAPHID_ERROR: u8 = 0x3f;
+#[allow(dead_code)]
+const DIAG_ACTION_FETCH_UP_CONFIG: u8 = 0x05;
+#[allow(dead_code)]
+const DIAG_ACTION_SET_UP_CONFIG: u8 = 0x06;
 
 const CTAP2_MAKE_CREDENTIAL: u8 = 0x01;
 const CTAP2_GET_ASSERTION: u8 = 0x02;
@@ -79,6 +83,20 @@ pub trait ManagerBackend {
         Ok("当前后端不支持固件凭据擦除。".to_string())
     }
 
+    #[allow(dead_code)]
+    fn get_user_presence(&mut self, _log: Logger<'_>) -> Result<UserPresenceConfigSnapshot> {
+        bail!("当前后端不支持读取 UP 配置。")
+    }
+
+    #[allow(dead_code)]
+    fn set_user_presence(
+        &mut self,
+        _config: &UserPresenceConfigSnapshot,
+        _log: Logger<'_>,
+    ) -> Result<UserPresenceConfigSnapshot> {
+        bail!("当前后端不支持写入 UP 配置。")
+    }
+
     fn init_channel(
         &mut self,
         session: &mut SessionSnapshot,
@@ -107,6 +125,8 @@ pub trait ManagerBackend {
 pub struct PreviewBackend {
     next_channel_id: u32,
     next_credential_seed: u128,
+    #[allow(dead_code)]
+    user_presence: UserPresenceConfigSnapshot,
 }
 
 impl Default for PreviewBackend {
@@ -114,6 +134,7 @@ impl Default for PreviewBackend {
         Self {
             next_channel_id: 1,
             next_credential_seed: 0x9923_3e84_a981_d740_a416_a14a_764a_db68,
+            user_presence: default_user_presence_config(),
         }
     }
 }
@@ -153,6 +174,24 @@ impl ManagerBackend for PreviewBackend {
             capabilities: vec!["支持 CBOR".to_string(), "无旧版 MSG".to_string()],
             state_label: "已连接".to_string(),
         })
+    }
+
+    fn get_user_presence(&mut self, log: Logger<'_>) -> Result<UserPresenceConfigSnapshot> {
+        log("UP", "预览后端返回当前 UP 配置。");
+        Ok(self.user_presence.clone())
+    }
+
+    fn set_user_presence(
+        &mut self,
+        config: &UserPresenceConfigSnapshot,
+        log: Logger<'_>,
+    ) -> Result<UserPresenceConfigSnapshot> {
+        self.user_presence = normalize_user_presence_config(config)?;
+        log(
+            "UP",
+            &format!("预览后端已更新 UP 配置为 {}", self.user_presence.source),
+        );
+        Ok(self.user_presence.clone())
     }
 
     fn init_channel(
@@ -545,6 +584,33 @@ impl ManagerBackend for DebugHidBackend {
             log,
         )?;
         Ok(String::from_utf8_lossy(&packet.payload).to_string())
+    }
+
+    fn get_user_presence(&mut self, log: Logger<'_>) -> Result<UserPresenceConfigSnapshot> {
+        let packet = self.send_command(
+            self.channel_id
+                .ok_or_else(|| anyhow!("请先执行 CTAPHID 初始化。"))?,
+            CTAPHID_DIAG,
+            &[DIAG_ACTION_FETCH_UP_CONFIG],
+            log,
+        )?;
+        parse_user_presence_config(&packet.payload)
+    }
+
+    fn set_user_presence(
+        &mut self,
+        config: &UserPresenceConfigSnapshot,
+        log: Logger<'_>,
+    ) -> Result<UserPresenceConfigSnapshot> {
+        let payload = encode_user_presence_update(config)?;
+        let packet = self.send_command(
+            self.channel_id
+                .ok_or_else(|| anyhow!("请先执行 CTAPHID 初始化。"))?,
+            CTAPHID_DIAG,
+            &payload,
+            log,
+        )?;
+        parse_user_presence_config(&packet.payload)
     }
 
     fn init_channel(
@@ -1171,6 +1237,77 @@ fn random_bytes(length: usize) -> Result<Vec<u8>> {
     let mut output = vec![0u8; length];
     getrandom(&mut output).map_err(|error| anyhow!("生成随机字节失败: {error}"))?;
     Ok(output)
+}
+
+fn default_user_presence_config() -> UserPresenceConfigSnapshot {
+    UserPresenceConfigSnapshot {
+        enabled: true,
+        source: "bootsel".to_string(),
+        gpio_pin: -1,
+        gpio_active_low: true,
+        tap_count: 2,
+        gesture_window_ms: 750,
+        request_timeout_ms: 8000,
+    }
+}
+
+#[allow(dead_code)]
+fn normalize_user_presence_config(
+    config: &UserPresenceConfigSnapshot,
+) -> Result<UserPresenceConfigSnapshot> {
+    let mut normalized = config.clone();
+
+    match normalized.source.as_str() {
+        "none" | "bootsel" | "gpio" => {}
+        other => bail!("不支持的 UP source: {other}"),
+    }
+
+    if normalized.source == "gpio" && !(0..=47).contains(&normalized.gpio_pin) {
+        bail!("当 UP source=gpio 时，gpioPin 必须在 0 到 47 之间。");
+    }
+    if normalized.tap_count < 1 || normalized.tap_count > 4 {
+        bail!("tapCount 必须在 1 到 4 之间。");
+    }
+    if normalized.gesture_window_ms < 100 || normalized.gesture_window_ms > 5000 {
+        bail!("gestureWindowMs 必须在 100 到 5000 之间。");
+    }
+    if normalized.request_timeout_ms < 500 || normalized.request_timeout_ms > 30000 {
+        bail!("requestTimeoutMs 必须在 500 到 30000 之间。");
+    }
+
+    normalized.enabled = normalized.source != "none";
+    Ok(normalized)
+}
+
+#[allow(dead_code)]
+fn parse_user_presence_config(payload: &[u8]) -> Result<UserPresenceConfigSnapshot> {
+    let text = std::str::from_utf8(payload).context("UP 配置响应不是有效的 UTF-8 文本")?;
+    serde_json::from_str(text).context("解析 UP 配置 JSON 失败")
+}
+
+#[allow(dead_code)]
+fn encode_user_presence_update(config: &UserPresenceConfigSnapshot) -> Result<Vec<u8>> {
+    let normalized = normalize_user_presence_config(config)?;
+    let source = match normalized.source.as_str() {
+        "none" => 0u8,
+        "bootsel" => 1u8,
+        "gpio" => 2u8,
+        other => bail!("不支持的 UP source: {other}"),
+    };
+
+    let gesture_window = normalized.gesture_window_ms.to_le_bytes();
+    let request_timeout = normalized.request_timeout_ms.to_le_bytes();
+    Ok(vec![
+        DIAG_ACTION_SET_UP_CONFIG,
+        source,
+        normalized.gpio_pin as u8,
+        u8::from(normalized.gpio_active_low),
+        normalized.tap_count,
+        gesture_window[0],
+        gesture_window[1],
+        request_timeout[0],
+        request_timeout[1],
+    ])
 }
 
 fn normalize_hex(input: &str) -> Result<String> {

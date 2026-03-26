@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Clone, Debug, Default)]
@@ -61,6 +61,18 @@ pub struct InfoSnapshot {
     pub versions: Vec<String>,
     pub capabilities: Vec<String>,
     pub options: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserPresenceConfigSnapshot {
+    pub enabled: bool,
+    pub source: String,
+    pub gpio_pin: i8,
+    pub gpio_active_low: bool,
+    pub tap_count: u8,
+    pub gesture_window_ms: u16,
+    pub request_timeout_ms: u16,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]

@@ -11,6 +11,7 @@
 #include "hardware/gpio.h"
 #include "meowkey_build_config.h"
 #include "pico/stdlib.h"
+#include "pico/status_led.h"
 
 enum {
     CTAP2_STATUS_OK = 0x00,
@@ -21,6 +22,8 @@ enum {
 enum {
     GPIO_PIN_UNINITIALIZED = -128,
     USER_PRESENCE_POLL_INTERVAL_MS = 5u,
+    USER_PRESENCE_INDICATOR_INTERVAL_MS = 100u,
+    USER_PRESENCE_INDICATOR_COLOR = PICO_COLORED_STATUS_LED_COLOR_FROM_RGB(0x06, 0x06, 0x06),
 };
 
 static meowkey_user_presence_config_t s_cached_config;
@@ -113,6 +116,18 @@ static uint32_t elapsed_ms(uint32_t start_ms, uint32_t now_ms) {
     return now_ms - start_ms;
 }
 
+static void write_wait_indicator(bool on) {
+    if (colored_status_led_supported()) {
+        if (on) {
+            colored_status_led_set_on_with_color(USER_PRESENCE_INDICATOR_COLOR);
+        } else {
+            colored_status_led_set_state(false);
+        }
+    } else if (status_led_supported()) {
+        status_led_set_state(on);
+    }
+}
+
 void meowkey_user_presence_init(void) {
     s_cached_config_ready = false;
     cache_config_if_needed();
@@ -128,6 +143,9 @@ uint8_t meowkey_user_presence_wait_for_confirmation(const char *reason) {
     uint32_t first_tap_ms = 0u;
     uint8_t taps_seen = 0u;
     bool last_pressed;
+    bool armed;
+    bool indicator_on = true;
+    uint32_t last_indicator_toggle_ms;
 
     cache_config_if_needed();
     if (s_cached_config.source == MEOWKEY_USER_PRESENCE_SOURCE_NONE) {
@@ -137,19 +155,44 @@ uint8_t meowkey_user_presence_wait_for_confirmation(const char *reason) {
 
     start_ms = board_millis();
     last_pressed = read_presence_signal(&s_cached_config);
-    meowkey_diag_logf("userPresence waiting source=%u taps=%u reason=%s",
+    armed = !last_pressed;
+    last_indicator_toggle_ms = start_ms;
+    write_wait_indicator(indicator_on);
+    meowkey_diag_logf("userPresence waiting source=%u taps=%u initialPressed=%u reason=%s",
                       s_cached_config.source,
                       s_cached_config.tap_count,
+                      last_pressed ? 1u : 0u,
                       reason != NULL ? reason : "operation");
+    if (!armed) {
+        meowkey_diag_logf("userPresence waiting for initial release reason=%s",
+                          reason != NULL ? reason : "operation");
+    }
 
     while (elapsed_ms(start_ms, board_millis()) < s_cached_config.request_timeout_ms) {
         uint32_t now_ms = board_millis();
         bool pressed = read_presence_signal(&s_cached_config);
 
         ctap_hid_keepalive_up_needed();
+        if (elapsed_ms(last_indicator_toggle_ms, now_ms) >= USER_PRESENCE_INDICATOR_INTERVAL_MS) {
+            indicator_on = !indicator_on;
+            write_wait_indicator(indicator_on);
+            last_indicator_toggle_ms = now_ms;
+        }
+
+        if (!armed) {
+            last_pressed = pressed;
+            if (!pressed) {
+                armed = true;
+                meowkey_diag_logf("userPresence armed after release reason=%s",
+                                  reason != NULL ? reason : "operation");
+            }
+            sleep_ms(USER_PRESENCE_POLL_INTERVAL_MS);
+            continue;
+        }
 
         if (pressed && !last_pressed) {
             if (s_cached_config.tap_count <= 1u) {
+                write_wait_indicator(false);
                 meowkey_diag_logf("userPresence confirmed reason=%s", reason != NULL ? reason : "operation");
                 return CTAP2_STATUS_OK;
             }
@@ -158,10 +201,15 @@ uint8_t meowkey_user_presence_wait_for_confirmation(const char *reason) {
                 first_tap_ms = now_ms;
             } else {
                 taps_seen += 1u;
-                if (taps_seen >= s_cached_config.tap_count) {
-                    meowkey_diag_logf("userPresence confirmed reason=%s", reason != NULL ? reason : "operation");
-                    return CTAP2_STATUS_OK;
-                }
+            }
+            meowkey_diag_logf("userPresence tap %u/%u reason=%s",
+                              taps_seen,
+                              s_cached_config.tap_count,
+                              reason != NULL ? reason : "operation");
+            if (taps_seen >= s_cached_config.tap_count) {
+                write_wait_indicator(false);
+                meowkey_diag_logf("userPresence confirmed reason=%s", reason != NULL ? reason : "operation");
+                return CTAP2_STATUS_OK;
             }
         }
 
@@ -173,6 +221,7 @@ uint8_t meowkey_user_presence_wait_for_confirmation(const char *reason) {
         sleep_ms(USER_PRESENCE_POLL_INTERVAL_MS);
     }
 
+    write_wait_indicator(false);
     meowkey_diag_logf("userPresence timeout reason=%s", reason != NULL ? reason : "operation");
     return CTAP2_ERR_USER_ACTION_TIMEOUT;
 }

@@ -6,7 +6,7 @@
       "flashSizeMB": 16,
       "credentialCapacity": 0,
       "credentialStoreKB": 64,
-      "userPresenceSource": "none",
+      "userPresenceSource": "bootsel",
       "userPresenceGpioPin": -1,
       "userPresenceGpioActiveState": "low",
       "userPresenceTapCount": 2,

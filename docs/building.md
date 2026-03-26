@@ -43,7 +43,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -Preset custom-base
 - `-DisableDebugHid`
   关闭 Debug HID，仅保留标准 FIDO HID。
 - `-UserPresenceSource`
-  `none | bootsel | gpio`。当前 `meowkey_rp2350_usb` 默认是 `none`；这表示保留协议兼容性，但跳过物理确认。不建议把 `BOOTSEL` 当运行时 UP。
+  `none | bootsel | gpio`。当前 `meowkey_rp2350_usb` 默认是 `bootsel`，即双击 `BOOTSEL` 作为运行时 UP；需要关闭时可显式传 `-UserPresenceSource none`。
 - `-UserPresenceGpioPin`
   当 `-UserPresenceSource gpio` 时指定按键引脚。
 - `-UserPresenceGpioActiveState`
@@ -145,7 +145,8 @@ cargo run
 - 这两个调试工具都依赖 Debug HID。
 - 若使用 `-DisableDebugHid` 构建，调试工具会失去设备访问能力。
 - `probe` 固件不使用 Debug HID，而是通过 USB 串口输出 JSON 探测报告。
-- 当前 `meowkey_rp2350_usb` 不建议把 `BOOTSEL` 作为运行时 UP 输入；如果没有独立按键，建议保持 `-UserPresenceSource none`。
+- UP 配置会持久化到 Flash；如果设备之前已保存过 `source=none` 或 `source=gpio`，重新刷默认固件不会自动覆盖该配置。
+- 如果你要显式关闭当前板卡的 BOOTSEL UP，直接传 `-UserPresenceSource none`；后续 UI 也会复用同一条持久化配置接口。
 
 ## 7. Probe 固件与 preset 草案
 

@@ -737,7 +737,11 @@ fn copy_toolbar(ui: &mut egui::Ui, ctx: &egui::Context, label: &str, text: &str)
         if secondary_button(ui, "复制").clicked() {
             ctx.copy_text(text.to_string());
         }
-        ui.label(RichText::new(format!("复制 {label}")).size(11.0).color(muted_text()));
+        ui.label(
+            RichText::new(format!("复制 {label}"))
+                .size(11.0)
+                .color(muted_text()),
+        );
     });
     ui.add_space(6.0);
 }
