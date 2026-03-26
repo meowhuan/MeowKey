@@ -1,0 +1,161 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version_tag:
+        description: "Release tag, for example v0.2.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    env:
+      PICOTOOL_FETCH_DIR: ${{ github.workspace }}/.cache/picotool-release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve release tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "RELEASE_TAG=${{ inputs.version_tag }}" >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_TAG=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Parse version
+        run: |
+          TAG="${RELEASE_TAG#v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$TAG"
+          test -n "$MAJOR"
+          test -n "$MINOR"
+          test -n "$PATCH"
+          echo "MEOWKEY_VERSION_MAJOR=$MAJOR" >> "$GITHUB_ENV"
+          echo "MEOWKEY_VERSION_MINOR=$MINOR" >> "$GITHUB_ENV"
+          echo "MEOWKEY_VERSION_PATCH=$PATCH" >> "$GITHUB_ENV"
+
+      - name: Install firmware build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi ninja-build zip
+
+      - name: Build release firmware (debug)
+        run: |
+          cmake -S . -B build-release-debug -G Ninja \
+            -DPICO_BOARD=meowkey_rp2350_usb \
+            -DMEOWKEY_VERSION_MAJOR=${MEOWKEY_VERSION_MAJOR} \
+            -DMEOWKEY_VERSION_MINOR=${MEOWKEY_VERSION_MINOR} \
+            -DMEOWKEY_VERSION_PATCH=${MEOWKEY_VERSION_PATCH} \
+            -DMEOWKEY_VERSION_LABEL= \
+            -DMEOWKEY_ENABLE_DEBUG_HID=ON \
+            -DPICOTOOL_FETCH_FROM_GIT_PATH=${PICOTOOL_FETCH_DIR}
+          cmake --build build-release-debug --parallel
+
+      - name: Build release probe firmware
+        run: cmake --build build-release-debug --parallel --target meowkey_probe
+
+      - name: Build release firmware (hardened)
+        run: |
+          cmake -S . -B build-release-hardened -G Ninja \
+            -DPICO_BOARD=meowkey_rp2350_usb \
+            -DMEOWKEY_VERSION_MAJOR=${MEOWKEY_VERSION_MAJOR} \
+            -DMEOWKEY_VERSION_MINOR=${MEOWKEY_VERSION_MINOR} \
+            -DMEOWKEY_VERSION_PATCH=${MEOWKEY_VERSION_PATCH} \
+            -DMEOWKEY_VERSION_LABEL= \
+            -DMEOWKEY_ENABLE_DEBUG_HID=OFF \
+            -DPICOTOOL_FETCH_FROM_GIT_PATH=${PICOTOOL_FETCH_DIR}
+          cmake --build build-release-hardened --parallel
+
+      - name: Package artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          for variant in debug hardened; do
+            build_dir="build-release-${variant}"
+            package_dir="dist/meowkey-${RELEASE_TAG}-${variant}"
+            mkdir -p "${package_dir}"
+
+            cp "${build_dir}/meowkey.uf2" "${package_dir}/"
+            cp "${build_dir}/meowkey.bin" "${package_dir}/"
+            cp "${build_dir}/meowkey.hex" "${package_dir}/"
+            cp "${build_dir}/meowkey.elf" "${package_dir}/"
+            cp "${build_dir}/meowkey.elf.map" "${package_dir}/"
+            cp "${build_dir}/generated/meowkey_build_config.h" "${package_dir}/"
+
+            debug_hid=true
+            if [ "${variant}" = "hardened" ]; then
+              debug_hid=false
+            fi
+
+            cat > "${package_dir}/manifest.json" <<EOF
+          {
+            "project": "MeowKey",
+            "tag": "${RELEASE_TAG}",
+            "variant": "${variant}",
+            "board": "meowkey_rp2350_usb",
+            "debugHidEnabled": ${debug_hid},
+            "version": {
+              "major": ${MEOWKEY_VERSION_MAJOR},
+              "minor": ${MEOWKEY_VERSION_MINOR},
+              "patch": ${MEOWKEY_VERSION_PATCH}
+            }
+          }
+          EOF
+
+            (
+              cd dist
+              zip -rq "meowkey-${RELEASE_TAG}-${variant}.zip" "meowkey-${RELEASE_TAG}-${variant}"
+            )
+            sha256sum "dist/meowkey-${RELEASE_TAG}-${variant}.zip" > "dist/meowkey-${RELEASE_TAG}-${variant}.zip.sha256"
+          done
+
+          probe_package_dir="dist/meowkey-${RELEASE_TAG}-probe"
+          mkdir -p "${probe_package_dir}"
+          cp "build-release-debug/meowkey_probe.uf2" "${probe_package_dir}/"
+          cp "build-release-debug/meowkey_probe.bin" "${probe_package_dir}/"
+          cp "build-release-debug/meowkey_probe.hex" "${probe_package_dir}/"
+          cp "build-release-debug/meowkey_probe.elf" "${probe_package_dir}/"
+          cp "build-release-debug/meowkey_probe.elf.map" "${probe_package_dir}/"
+
+          cat > "${probe_package_dir}/manifest.json" <<EOF
+          {
+            "project": "MeowKey",
+            "tag": "${RELEASE_TAG}",
+            "variant": "probe",
+            "board": "meowkey_rp2350_usb",
+            "usage": "board-id-detection",
+            "version": {
+              "major": ${MEOWKEY_VERSION_MAJOR},
+              "minor": ${MEOWKEY_VERSION_MINOR},
+              "patch": ${MEOWKEY_VERSION_PATCH}
+            }
+          }
+          EOF
+
+          (
+            cd dist
+            zip -rq "meowkey-${RELEASE_TAG}-probe.zip" "meowkey-${RELEASE_TAG}-probe"
+          )
+          sha256sum "dist/meowkey-${RELEASE_TAG}-probe.zip" > "dist/meowkey-${RELEASE_TAG}-probe.zip.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: meowkey-${{ env.RELEASE_TAG }}
+          path: |
+            dist/*.zip
+            dist/*.sha256
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          generate_release_notes: true
+          files: |
+            dist/*.zip
+            dist/*.sha256

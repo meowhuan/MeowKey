@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install firmware build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi ninja-build
+
+      - name: Validate repository metadata
+        run: |
+          python3 -m json.tool scripts/board-presets.json > /dev/null
+          python3 -c "import os, py_compile, tempfile; py_compile.compile('scripts/gui_server.py', doraise=True, cfile=os.path.join(tempfile.gettempdir(), 'meowkey_gui_server.pyc'))"
+
+      - name: Build firmware (debug)
+        run: |
+          cmake -S . -B build-ci -G Ninja \
+            -DPICO_BOARD=meowkey_rp2350_usb \
+            -DPICO_NO_PICOTOOL=ON \
+            -DMEOWKEY_VERSION_LABEL=ci
+          cmake --build build-ci --parallel
+
+      - name: Build firmware (hardened)
+        run: |
+          cmake -S . -B build-ci-hardened -G Ninja \
+            -DPICO_BOARD=meowkey_rp2350_usb \
+            -DPICO_NO_PICOTOOL=ON \
+            -DMEOWKEY_ENABLE_DEBUG_HID=OFF \
+            -DMEOWKEY_VERSION_LABEL=ci
+          cmake --build build-ci-hardened --parallel
+          grep -q "#define MEOWKEY_ENABLE_DEBUG_HID 0" build-ci-hardened/generated/meowkey_build_config.h
+
+      - name: Build probe firmware
+        run: cmake --build build-ci --parallel --target meowkey_probe
+
+  desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check Rust manager
+        run: cargo check --locked --manifest-path native-rs/meowkey-manager/Cargo.toml
+
+      - name: Smoke-test probe script
+        shell: powershell
+        run: |
+          $temp = Join-Path $env:TEMP "meowkey-probe-sample.json"
+          @'
+          {
+            "schemaVersion": 1,
+            "tool": "meowkey-probe",
+            "uniqueId": "00112233445566778899aabbccddeeff",
+            "flashSizeBytes": 16777216,
+            "gpio": {
+              "pinCount": 30,
+              "forcedPinCandidates": [2, 3],
+              "pins": [
+                {"pin": 2, "raw": false, "pullUp": false, "pullDown": false, "classification": "forced-low"},
+                {"pin": 3, "raw": true, "pullUp": true, "pullDown": true, "classification": "forced-high"}
+              ]
+            },
+            "i2c": {
+              "pairs": [
+                {"instance": 0, "sdaPin": 4, "sclPin": 5, "devices": ["0x50"]}
+              ],
+              "eepromCandidates": [
+                {"instance": 0, "sdaPin": 4, "sclPin": 5, "address": "0x50", "readWith8BitOffset": true, "readWith16BitOffset": false, "addressWidth": 1, "suggestedPreset": "24c02", "rawHex": "0011223344556677"}
+              ]
+            }
+          }
+          '@ | Set-Content -Path $temp -Encoding utf8
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1 -InputPath $temp | Out-Null
+
+      - name: Build WPF prototype
+        run: dotnet build native/MeowKey.Manager/MeowKey.Manager.csproj -c Release -p:ContinuousIntegrationBuild=true

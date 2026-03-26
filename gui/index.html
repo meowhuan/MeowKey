@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MeowKey 控制台</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">MeowKey 控制台</p>
+        <h1>这是 RP2350 passkey 固件工作台，不是玩具演示页。</h1>
+        <p class="lede">
+          通过 WebHID 直连设备，分配 CTAPHID 通道，检查当前固件响应，
+          并在协议仍在演进时保留完整原始报文轨迹。
+        </p>
+      </div>
+      <div class="hero-meta">
+        <div class="meta-chip">
+          <span class="meta-label">传输</span>
+          <span class="meta-value">USB HID / FIDO</span>
+        </div>
+        <div class="meta-chip">
+          <span class="meta-label">目标</span>
+          <span class="meta-value">MeowKey RP2350</span>
+        </div>
+        <div class="meta-chip">
+          <span class="meta-label">状态</span>
+          <span class="meta-value" id="status-badge">空闲</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="grid">
+      <section class="panel accent-panel">
+        <div class="panel-head">
+          <h2>连接会话</h2>
+          <p>浏览器侧 HID 控制面板。</p>
+        </div>
+
+        <div class="button-row">
+          <button id="connect-button" class="btn primary">请求设备权限</button>
+          <button id="reconnect-button" class="btn ghost">重连已授权设备</button>
+          <button id="disconnect-button" class="btn ghost" disabled>断开连接</button>
+        </div>
+
+        <div class="facts">
+          <div class="fact">
+            <span class="fact-label">设备</span>
+            <span class="fact-value" id="device-name">未连接</span>
+          </div>
+          <div class="fact">
+            <span class="fact-label">VID:PID</span>
+            <span class="fact-value" id="device-id">-</span>
+          </div>
+          <div class="fact">
+            <span class="fact-label">通道</span>
+            <span class="fact-value" id="channel-id">未分配</span>
+          </div>
+          <div class="fact">
+            <span class="fact-label">能力</span>
+            <span class="fact-value" id="capabilities">-</span>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="button-row">
+          <button id="init-button" class="btn primary" disabled>CTAPHID 初始化</button>
+          <button id="ping-button" class="btn ghost" disabled>Ping 测试</button>
+          <button id="get-info-button" class="btn ghost" disabled>读取信息</button>
+          <button id="clear-log-button" class="btn ghost">清空日志</button>
+        </div>
+
+        <label class="field">
+          <span>Ping 负载</span>
+          <input id="ping-input" type="text" value="meowkey-handshake" maxlength="57">
+        </label>
+
+        <div class="divider"></div>
+
+        <div class="panel-head compact">
+          <h2>注册测试</h2>
+          <p>发一条最小 makeCredential 请求，验证凭据创建链路。</p>
+        </div>
+
+        <div class="button-row">
+          <button id="make-credential-button" class="btn primary" disabled>注册凭据</button>
+          <button id="get-assertion-button" class="btn ghost" disabled>获取断言</button>
+        </div>
+
+        <div class="field-grid">
+          <label class="field">
+            <span>RP ID</span>
+            <input id="rp-id-input" type="text" value="meowkey.local" maxlength="63">
+          </label>
+          <label class="field">
+            <span>用户 ID</span>
+            <input id="user-id-input" type="text" value="meowhuan" maxlength="32">
+          </label>
+          <label class="field">
+            <span>用户名</span>
+            <input id="user-name-input" type="text" value="Meowhuan" maxlength="32">
+          </label>
+          <label class="field">
+            <span>显示名</span>
+            <input id="display-name-input" type="text" value="Meowhuan Debug" maxlength="64">
+          </label>
+          <label class="field wide">
+            <span>凭据 ID（可选，十六进制）</span>
+            <input id="credential-id-input" type="text" value="" maxlength="128">
+          </label>
+          <label class="field wide">
+            <span>excludeList（每行一个凭据 ID，十六进制）</span>
+            <textarea id="exclude-list-input" rows="4" placeholder="留空表示不带 excludeList&#10;每行一个 credentialId"></textarea>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>结构化结果</h2>
+          <p>已解码的传输层与 CTAP 状态。</p>
+        </div>
+
+        <div class="result-grid">
+          <article class="result-card">
+            <h3>初始化响应</h3>
+            <pre id="init-output" class="code-block muted">还没有初始化响应。</pre>
+          </article>
+          <article class="result-card">
+            <h3>Ping 响应</h3>
+            <pre id="ping-output" class="code-block muted">还没有 Ping 响应。</pre>
+          </article>
+          <article class="result-card tall">
+            <h3>authenticatorGetInfo</h3>
+            <pre id="info-output" class="code-block muted">还没有认证器信息。</pre>
+          </article>
+          <article class="result-card tall">
+            <h3>makeCredential</h3>
+            <pre id="make-credential-output" class="code-block muted">还没有注册结果。</pre>
+          </article>
+          <article class="result-card tall">
+            <h3>getAssertion</h3>
+            <pre id="get-assertion-output" class="code-block muted">还没有断言结果。</pre>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel log-panel">
+        <div class="panel-head">
+          <h2>报文日志</h2>
+          <p>带时间戳的原始 CTAPHID 报文。</p>
+        </div>
+        <div id="log-output" class="log-output" aria-live="polite"></div>
+      </section>
+    </main>
+  </div>
+
+  <template id="log-entry-template">
+    <article class="log-entry">
+      <div class="log-head">
+        <span class="log-time"></span>
+        <span class="log-tag"></span>
+      </div>
+      <pre class="log-body"></pre>
+    </article>
+  </template>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

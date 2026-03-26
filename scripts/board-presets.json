@@ -1,0 +1,22 @@
+{
+  "presets": {
+    "custom-baseboard-v1": {
+      "description": "Preset for the linked RP2350 custom baseboard accessory",
+      "board": "meowkey_rp2350_usb",
+      "flashSizeMB": 16,
+      "credentialCapacity": 0,
+      "credentialStoreKB": 64,
+      "boardIdMode": "none",
+      "boardIdGpioPins": "",
+      "boardIdGpioActiveState": "low",
+      "boardIdI2cPreset": "24c02",
+      "boardIdI2cInstance": 0,
+      "boardIdI2cSdaPin": 4,
+      "boardIdI2cSclPin": 5,
+      "boardIdI2cAddress": "0x50",
+      "boardIdI2cMemOffset": 0,
+      "boardIdI2cMemAddressWidth": 1,
+      "boardIdI2cReadLength": 8
+    }
+  }
+}
