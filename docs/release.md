@@ -42,29 +42,34 @@ GitHub Actions 的 `ci.yml` 会做两类检查。
 - 推送形如 `v0.2.0` 的 tag
 - 手动触发并指定版本号
 
-工作流会构建三个发行变体：
+工作流会构建以下发行包：
 
-- `debug`
-  保留 Debug HID，主要用于开发者联调。
-- `hardened`
-  关闭 Debug HID，作为更适合对外发布的默认固件。
-- `probe`
+- `generic-debug`
+  通用开发固件，保留 Debug HID。
+- `generic-hardened`
+  通用分发基线，关闭 Debug HID。
+- `preset-<preset-package-label>-debug`
+  预设匹配的开发固件，当前会为 `usb-a-baseboard-v1` 产出对应 zip。
+- `preset-<preset-package-label>-hardened`
+  预设匹配的硬化固件。
+- `probe-board-id`
   独立板卡探测固件，用于生成新的 preset 草案。
 
 ## 4. Release 产物
 
-`debug` 和 `hardened` 变体会打包：
+所有 `generic-*` 与 `preset-*` 固件 zip 都会打包：
 
 - `meowkey.uf2`
 - `meowkey.bin`
 - `meowkey.hex`
 - `meowkey.elf`
 - `meowkey.elf.map`
-- `generated/meowkey_build_config.h`
+- `meowkey_build_config.h`
 - `manifest.json`
-- `meowkey-<tag>-<variant>.zip.sha256`
+- `flash.ps1`
+- `flash.sh`
 
-`probe` 变体会打包：
+`probe-board-id` zip 会打包：
 
 - `meowkey_probe.uf2`
 - `meowkey_probe.bin`
@@ -72,9 +77,14 @@ GitHub Actions 的 `ci.yml` 会做两类检查。
 - `meowkey_probe.elf`
 - `meowkey_probe.elf.map`
 - `manifest.json`
-- `meowkey-<tag>-probe.zip.sha256`
+- `flash.ps1`
+- `flash.sh`
 
-GitHub Release 页面会直接附上三类 zip 包。
+校验文件不再按 zip 单独拆分，而是统一放在：
+
+- `SHA256SUMS.txt`
+
+GitHub Release 页面会直接附上全部 zip 包和这一份统一校验清单。
 
 ## 5. 版本约定
 
@@ -118,7 +128,7 @@ release workflow 只保证：
 
 - 固件能构建
 - 产物会被打包
-- Debug / hardened / probe 三类变体可区分
+- generic / preset / probe 三类用途可区分
 
 它不保证：
 

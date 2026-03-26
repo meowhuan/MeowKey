@@ -41,7 +41,8 @@ MeowKey 现在是“可构建、可联调、可验证协议行为”的开发固
 
 如果你购买的是仓库当前已经适配的 RP2350 自定义底板配件，请直接使用现有预设：
 
-- 预设名：`custom-baseboard-v1`
+- 推荐预设名：`usb-a-baseboard-v1`
+- 兼容旧别名：`custom-baseboard-v1`
 - 参考商品链接：`https://e.tb.cn/h.i7f6mxcYOn7HoWb?tk=JVti5bdpeWA`
 
 说明：
@@ -91,11 +92,18 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -BuildDir build-pro
 powershell -ExecutionPolicy Bypass -File .\scripts\flash.ps1 -Uf2Path .\build\meowkey.uf2
 ```
 
+Linux：
+
+```bash
+./scripts/flash.sh ./build/meowkey.uf2
+```
+
 说明：
 
 - `-NoPicotool` 会跳过 `UF2` 生成，只产出 `elf/bin/hex/map/dis`。
 - 要生成 `UF2`，需要允许 CMake 拉取或使用已安装的 `picotool`。
 - 如果本机有错误的 Git 全局代理，继续保留 `-IgnoreGitGlobalConfig`。
+- 发布包内自带的 `flash.ps1` / `flash.sh` 也支持“脚本同目录仅有一个 UF2 文件”时直接无参刷写。
 
 ### 浏览器调试台
 
@@ -155,16 +163,18 @@ powershell -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1 -OutputPath .
 
 ## 发行版变体
 
-仓库现在区分三类固件：
+仓库现在区分三类固件用途：
 
-- `debug`
+- `generic-debug`
   保留 Debug HID，便于 WebUI / Rust 管理器联调；不适合直接分发给终端用户。
-- `hardened`
+- `generic-hardened`
   关闭 Debug HID，仅保留标准 FIDO HID；这是更接近可发布状态的构建基线。
-- `probe`
+- `preset-usb-a-baseboard-v1-debug` / `preset-usb-a-baseboard-v1-hardened`
+  面向当前这块已适配 USB-A 底板配件的预设固件，包名会直接带上预设用途。
+- `probe-board-id`
   独立 USB 串口探测固件，用于读取 GPIO 编码电阻/拔码和 I2C EEPROM/ID 候选信息，并生成 preset 草案。
 
-GitHub Actions 的 release 工作流会产出这三类变体。
+GitHub Actions 的 release 工作流会同时产出 generic、preset 和 probe 包；每个 zip 内都会带 Windows / Linux 刷写脚本。
 
 ## 文档索引
 

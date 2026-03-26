@@ -31,6 +31,8 @@ jobs:
         run: |
           python3 -m json.tool scripts/board-presets.json > /dev/null
           python3 -c "import os, py_compile, tempfile; py_compile.compile('scripts/gui_server.py', doraise=True, cfile=os.path.join(tempfile.gettempdir(), 'meowkey_gui_server.pyc'))"
+          python3 -c "import os, py_compile, tempfile; py_compile.compile('scripts/release-artifacts.py', doraise=True, cfile=os.path.join(tempfile.gettempdir(), 'meowkey_release_artifacts.pyc'))"
+          bash -n scripts/flash.sh
 
       - name: Build firmware (debug)
         run: |

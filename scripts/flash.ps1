@@ -1,5 +1,4 @@
 param(
-    [Parameter(Mandatory = $true)]
     [string]$Uf2Path,
     [string]$DriveRoot
 )
@@ -14,6 +13,25 @@ function Find-Uf2Drive {
             }
         }
     } | Select-Object -First 1
+}
+
+function Find-DefaultUf2 {
+    $matches = Get-ChildItem -Path $PSScriptRoot -Filter *.uf2 -File -ErrorAction SilentlyContinue
+    if ($matches.Count -eq 1) {
+        return $matches[0].FullName
+    }
+    if ($matches.Count -gt 1) {
+        throw "Multiple UF2 files were found next to flash.ps1. Pass -Uf2Path explicitly."
+    }
+    return $null
+}
+
+if (-not $Uf2Path) {
+    $Uf2Path = Find-DefaultUf2
+}
+
+if (-not $Uf2Path) {
+    throw "UF2 path is required when no package-local UF2 file is available."
 }
 
 $resolvedUf2 = Resolve-Path $Uf2Path

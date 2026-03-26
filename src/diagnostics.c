@@ -49,7 +49,12 @@ void meowkey_diag_logf(const char *format, ...) {
 
 size_t meowkey_diag_snapshot(char *output, size_t output_capacity) {
     size_t offset = 0u;
-    size_t count;
+    size_t count = 0u;
+    size_t included_count = 0u;
+    size_t included_bytes = 0u;
+    size_t omitted_count = 0u;
+    int omitted_written = 0;
+    size_t available_capacity;
 
     if (output_capacity == 0u) {
         return 0u;
@@ -60,21 +65,48 @@ size_t meowkey_diag_snapshot(char *output, size_t output_capacity) {
         return strlen(output);
     }
 
-    for (count = 0u; count < s_entry_count; ++count) {
-        size_t index = (s_next_index + MEOWKEY_DIAG_ENTRY_COUNT - s_entry_count + count) % MEOWKEY_DIAG_ENTRY_COUNT;
-        int written = snprintf(
-            &output[offset],
-            output_capacity - offset,
-            "%s\n",
-            s_entries[index]);
-        if (written <= 0) {
+    available_capacity = output_capacity - 1u;
+    while (included_count < s_entry_count) {
+        size_t reverse_index = included_count;
+        size_t index = (s_next_index + MEOWKEY_DIAG_ENTRY_COUNT - 1u - reverse_index) % MEOWKEY_DIAG_ENTRY_COUNT;
+        size_t entry_length = strnlen(s_entries[index], MEOWKEY_DIAG_ENTRY_SIZE) + 1u;
+        size_t candidate_included_count = included_count + 1u;
+        size_t candidate_omitted_count = s_entry_count - candidate_included_count;
+        size_t required_capacity = included_bytes + entry_length;
+
+        if (candidate_omitted_count > 0u) {
+            omitted_written = snprintf(NULL, 0, "olderEntriesOmitted=%lu\n", (unsigned long)candidate_omitted_count);
+            if (omitted_written > 0) {
+                required_capacity += (size_t)omitted_written;
+            }
+        }
+
+        if (required_capacity > available_capacity) {
             break;
         }
 
-        if ((size_t)written >= (output_capacity - offset)) {
-            offset = output_capacity - 1u;
-            output[offset] = '\0';
-            return offset;
+        included_count = candidate_included_count;
+        included_bytes += entry_length;
+    }
+
+    omitted_count = s_entry_count - included_count;
+    if (omitted_count > 0u) {
+        omitted_written = snprintf(
+            &output[offset],
+            output_capacity - offset,
+            "olderEntriesOmitted=%lu\n",
+            (unsigned long)omitted_count);
+        if (omitted_written > 0 && (size_t)omitted_written < (output_capacity - offset)) {
+            offset += (size_t)omitted_written;
+        }
+    }
+
+    for (count = 0u; count < included_count; ++count) {
+        size_t chronological_index = included_count - count - 1u;
+        size_t index = (s_next_index + MEOWKEY_DIAG_ENTRY_COUNT - 1u - chronological_index) % MEOWKEY_DIAG_ENTRY_COUNT;
+        int written = snprintf(&output[offset], output_capacity - offset, "%s\n", s_entries[index]);
+        if (written <= 0 || (size_t)written >= (output_capacity - offset)) {
+            break;
         }
         offset += (size_t)written;
     }

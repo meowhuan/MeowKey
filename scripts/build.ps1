@@ -69,6 +69,9 @@ if ($Preset) {
         $availablePresets = @($presetFile.presets.PSObject.Properties.Name) -join ", "
         throw "Unknown preset '$Preset'. Available presets: $availablePresets"
     }
+    if ($presetConfig.deprecatedAliasOf) {
+        Write-Warning "Preset '$Preset' is deprecated. Use '$($presetConfig.deprecatedAliasOf)' instead."
+    }
 
     Set-FromPreset -ParameterName "Board" -PresetValue ([string]$presetConfig.board)
     Set-FromPreset -ParameterName "FlashSizeMB" -PresetValue ([int]$presetConfig.flashSizeMB)

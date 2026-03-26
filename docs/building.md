@@ -25,8 +25,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -BuildDir build-pro
 使用板级预设：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -Preset custom-baseboard-v1 -BuildDir build
+powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -Preset usb-a-baseboard-v1 -BuildDir build
 ```
+
+旧名字 `custom-baseboard-v1` 仍可用，但现在只作为兼容别名。
 
 ## 2. `build.ps1` 的关键参数
 
@@ -119,11 +121,19 @@ cmake --build build-ci-hardened
 
 ## 5. 刷写
 
-`flash.ps1` 会通过 `INFO_UF2.TXT` 自动寻找 RP2350/RP2 的 UF2 盘符：
+Windows 的 `flash.ps1` 会通过 `INFO_UF2.TXT` 自动寻找 RP2350/RP2 的 UF2 盘符：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\flash.ps1 -Uf2Path .\build\meowkey.uf2
 ```
+
+Linux 可使用配套的 `flash.sh`：
+
+```bash
+./scripts/flash.sh ./build/meowkey.uf2
+```
+
+如果脚本所在目录里只有一个 `*.uf2` 文件，`flash.ps1` 和 `flash.sh` 也都支持省略 UF2 路径参数。
 
 ## 6. 调试工具
 
