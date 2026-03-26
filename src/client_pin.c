@@ -354,6 +354,7 @@ static bool derive_shared_secret(const uint8_t peer_public_key[65], uint8_t outp
     mbedtls_ecp_point peer_point;
     mbedtls_ecp_point shared_point;
     mbedtls_mpi private_key;
+    uint8_t x_coordinate[32];
     int result;
 
     if (!s_key_agreement_ready) {
@@ -370,19 +371,22 @@ static bool derive_shared_secret(const uint8_t peer_public_key[65], uint8_t outp
         result = mbedtls_ecp_point_read_binary(&group, &peer_point, peer_public_key, 65u);
     }
     if (result == 0) {
+        result = mbedtls_ecp_check_pubkey(&group, &peer_point);
+    }
+    if (result == 0) {
         result = mbedtls_mpi_read_binary(&private_key, s_key_agreement_private, sizeof(s_key_agreement_private));
     }
     if (result == 0) {
         result = mbedtls_ecp_mul(&group, &shared_point, &private_key, &peer_point, client_pin_random, NULL);
     }
     if (result == 0) {
-        uint8_t x_coordinate[32];
         result = mbedtls_mpi_write_binary(&shared_point.MBEDTLS_PRIVATE(X), x_coordinate, sizeof(x_coordinate));
         if (result == 0) {
             result = sha256_bytes(x_coordinate, sizeof(x_coordinate), output) ? 0 : -1;
         }
     }
 
+    secure_zero(x_coordinate, sizeof(x_coordinate));
     mbedtls_mpi_free(&private_key);
     mbedtls_ecp_point_free(&shared_point);
     mbedtls_ecp_point_free(&peer_point);
@@ -465,11 +469,14 @@ static uint8_t validate_shared_secret_hmac(const uint8_t shared_secret[32],
                                            const uint8_t *provided_param,
                                            size_t provided_param_length) {
     uint8_t expected[32];
+    uint8_t status;
 
     if (provided_param_length != 16u || !hmac_sha256(shared_secret, 32u, message, message_length, expected)) {
         return CTAP2_ERR_PIN_AUTH_INVALID;
     }
-    return constant_time_equal(expected, provided_param, 16u) ? CTAP2_STATUS_OK : CTAP2_ERR_PIN_AUTH_INVALID;
+    status = constant_time_equal(expected, provided_param, 16u) ? CTAP2_STATUS_OK : CTAP2_ERR_PIN_AUTH_INVALID;
+    secure_zero(expected, sizeof(expected));
+    return status;
 }
 
 static uint8_t parse_new_pin_hash(const uint8_t shared_secret[32],

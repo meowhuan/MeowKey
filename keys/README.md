@@ -1,15 +1,37 @@
-这个目录用于放置本地安全启动签名密钥，但默认不应提交私钥。
+# Secure Boot Keys
 
-当前约定的文件名：
+## English
+
+This directory is reserved for local secure-boot signing material. Private keys should not be committed.
+
+Current default filename:
 
 - `meowkey-secureboot.pem`
 
-说明：
+Notes:
 
-- 默认开发构建和当前 release workflow 仍然会生成未烧 OTP 的开发态镜像。
-- 只有在你明确决定启用 RP2350 secure boot 时，才应该在本地放入签名私钥。
-- 如果同时启用 anti-rollback，默认会使用项目预留的 page 3 稀疏 OTP 行（`0xc0` 到 `0xe1`，步长 `3`）写入 thermometer counter；默认 12 行可提供 `288` 个版本槽，需要更大空间时请显式覆盖这些行。
-- 启用 secure boot 构建时会额外生成 `meowkey.otp.json`，供你在人工确认后自行烧录 OTP 公钥哈希与相关材料。
-- `keys/*.pem` 和 `keys/*.json` 已被 `.gitignore` 忽略。
+- default development builds and default release runs still work without OTP programming
+- only place a signing key here when you have decided to use the RP2350 signed-boot flow
+- enabling signed boot produces `meowkey.otp.json`, which you still review and program separately
+- anti-rollback uses the project-selected sparse page-3 OTP rows by default unless you override them
+- `keys/*.pem` and `keys/*.json` are ignored by `.gitignore`
 
-不要把这个目录误解成“仓库已经默认启用 secure boot”。它只是预留入口。
+This directory is an entry point for local signing, not a claim that secure boot is already fully provisioned by default.
+
+## 中文
+
+这个目录预留给本地 secure boot 签名材料使用，私钥不应该被提交进仓库。
+
+当前默认文件名：
+
+- `meowkey-secureboot.pem`
+
+需要注意：
+
+- 默认开发构建和默认 release 流程都可以在不烧录 OTP 的情况下工作
+- 只有在你明确决定走 RP2350 signed-boot 链路时，才应该把签名私钥放进这里
+- 启用 signed boot 后会生成 `meowkey.otp.json`，但你仍然需要自行审核并单独烧录
+- anti-rollback 默认使用项目预留的 page 3 稀疏 OTP 行，除非你显式覆盖
+- `.gitignore` 已经忽略 `keys/*.pem` 和 `keys/*.json`
+
+这个目录只是本地签名入口，不代表仓库默认已经完成 secure boot provisioning。

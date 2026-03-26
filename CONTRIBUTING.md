@@ -1,73 +1,117 @@
-# 贡献约定
+# Contributing
 
-## 1. 提交前至少做什么
+## English
 
-Windows 本地建议直接执行：
+### Local Checks
+
+Run this before you send changes:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\check.ps1
 ```
 
-它会检查：
+The script covers:
 
-- `board-presets.json` 可解析
-- `gui_server.py` 语法正确
-- `probe-board.ps1` 样例输入可跑通
-- 默认固件可离线构建
-- 关闭 Debug HID 的固件可离线构建
-- `probe` 固件可离线构建
-- Rust 管理器能通过 `cargo check`
-- WPF 原型能通过 `dotnet build`
+- `board-presets.json` parsing
+- `gui_server.py` syntax
+- `probe-board.ps1` sample input
+- offline default firmware build
+- offline hardened firmware build
+- offline probe firmware build
+- `cargo check` for the Rust manager
+- `dotnet build` for the WPF prototype
 
-## 2. 修改协议或行为时
+### When Behavior Changes
 
-如果你改了下面任一项，必须同步更新文档：
-
-- CTAPHID / CTAP2 命令覆盖范围
-- `getInfo` 返回内容
-- 调试接口能力
-- 发布物命名或变体
-- 安全边界
-
-至少要检查：
+If you change protocol behavior, release naming, Debug HID scope, build flags, or security boundaries, update the docs in the same change. At minimum review:
 
 - `README.md`
 - `docs/architecture.md`
 - `docs/known-gaps.md`
 - `docs/security.md`
 
-## 3. 关于 Debug HID
+### Debug HID Rules
 
-默认开发构建保留 Debug HID，便于调试；但：
+Debug HID is kept for bring-up and local tooling, but it must stay clearly separated from the safer redistribution path.
 
-- 不要把 Debug 构建当成生产固件
-- 不要在 release 里混淆 debug 与 hardened 变体
+If your change adds or expands debug capability, document:
 
-如果你的改动新增了调试能力，必须同时写明：
+- who can access it
+- how to disable it
+- whether it changes release packaging or safety expectations
 
-- 谁可以访问
-- 如何关闭
-- 对 release 的影响
+### Security Changes
 
-## 4. 关于安全改动
+For any security-related change, explain:
 
-安全改动需要明确写出三件事：
+1. what risk you are reducing
+2. what boundary still remains
+3. whether protocol compatibility, tooling, or storage format changes
 
-1. 修的是哪类风险。
-2. 没修掉的边界是什么。
-3. 是否影响协议兼容性、桌面工具或存储格式。
+### Releases
 
-## 5. 关于发行
-
-正式发布使用 GitHub tag：
+Version tags follow forms such as:
 
 - `v0.1.0`
 - `v0.2.0`
+- `v0.2.0-beta.2`
 
-release workflow 会同时打包：
+Release workflows package `debug`, `hardened`, and `probe` variants. Do not publish only the debug build, and re-check probe outputs when board-identification behavior changes.
 
-- `debug`
-- `hardened`
-- `probe`
+## 中文
 
-请不要只发布 Debug 构建；如果这次 release 影响板级识别，也要同步检查 `probe` 产物。
+### 本地检查
+
+提交改动前，建议至少执行一次：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\check.ps1
+```
+
+这个脚本当前会检查：
+
+- `board-presets.json` 是否可解析
+- `gui_server.py` 语法是否正确
+- `probe-board.ps1` 的样例输入是否可跑通
+- 默认固件是否能离线构建
+- 关闭 Debug HID 的硬化固件是否能离线构建
+- `probe` 固件是否能离线构建
+- Rust 管理器是否能通过 `cargo check`
+- WPF 原型是否能通过 `dotnet build`
+
+### 行为变化时必须同步文档
+
+如果你的改动影响了协议行为、发布命名、Debug HID 能力范围、构建参数或安全边界，应该在同一个改动里同步更新文档。至少需要检查：
+
+- `README.md`
+- `docs/architecture.md`
+- `docs/known-gaps.md`
+- `docs/security.md`
+
+### 关于 Debug HID
+
+Debug HID 仍然保留给 bring-up 和本地调试工具使用，但它必须和更安全的分发路径明确区分开。
+
+如果你的改动增加了新的调试能力，必须同时说明：
+
+- 谁能访问这项能力
+- 如何关闭它
+- 它是否影响 release 打包方式或安全预期
+
+### 关于安全改动
+
+任何安全相关改动都应写清楚三件事：
+
+1. 你在降低什么风险
+2. 还有哪些边界没有解决
+3. 是否影响协议兼容性、桌面工具或存储格式
+
+### 关于发布
+
+版本标签目前沿用这类形式：
+
+- `v0.1.0`
+- `v0.2.0`
+- `v0.2.0-beta.2`
+
+release 工作流会同时打包 `debug`、`hardened` 和 `probe` 变体。不要只发布 debug 构建；如果本次改动影响了板级识别逻辑，也要同步检查 probe 产物是否仍然合理。

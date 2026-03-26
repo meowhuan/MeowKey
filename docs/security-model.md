@@ -1,205 +1,339 @@
-# 当前安全模型
+# Security Model
 
-这份文档只描述“当前代码已经实现出来的安全行为”，不替代 FIDO 规范，也不把未来规划写成既成事实。
+## English
 
-## 1. 构建档位与信任边界
+This document describes what the current code actually does. It does not treat planned features as already finished.
 
-- `debug`
-  默认暴露 FIDO HID + Debug HID，USB 产品名会标成 `MeowKey DEV UNSAFE RP2350`。
-- `hardened`
-  关闭 Debug HID，只保留标准 FIDO HID，但仍不是量产级安全设计。
-- `probe`
-  单独的板卡探测镜像，不承载长期认证器逻辑。
+### 1. Build Tiers and Trust Boundaries
 
-当前最重要的边界是：
+- `debug`: FIDO HID plus Debug HID
+- `hardened`: standard FIDO HID only
+- `probe`: separate board-discovery image
 
-- `debug` 构建不能被当作可信认证器边界。
-- `hardened` 只是去掉开发后门后的较小攻击面基线，不代表敏感材料已经得到硬件保护。
-- 当前 RP2350 也不被当作安全元件；设备唯一材料 wrapping 只是 MCU 侧保护，不是不可导出密钥边界。
+The important trust statement is simple:
 
-## 2. 设备当前暴露的接口
+- `debug` is not a trustworthy authenticator boundary
+- `hardened` removes the development backdoor surface, but it still does not create hardware-backed secret boundaries
+- RP2350 is not treated as a secure element
 
-- 标准 FIDO HID 始终存在。
-- `debug` 构建额外暴露 Debug HID，并支持 `CTAPHID_DIAG (0x40)`。
-- Debug HID 的 `1/2/5/6` 在开启 Debug HID 时始终可用。
-- Debug HID 的 `3/4` 只有在 `MEOWKEY_ENABLE_DANGEROUS_DEBUG_COMMANDS=ON` 时才会编译进去；默认 debug 构建会开启它。
+### 2. Exposed Interfaces
 
-这意味着：
+Always present:
 
-- 关闭 Debug HID 才能真正移除这条开发面。
-- 只关闭危险调试命令并不能阻止主机读取日志或改写 UP 配置。
+- standard FIDO HID
 
-## 3. CTAP2 / WebAuthn 的当前安全语义
+Debug-only:
 
-- `getInfo` 当前上报 `versions=["FIDO_2_0"]`。
-- `getInfo` 当前上报 `extensions=["hmac-secret"]`。
-- `getInfo` 当前上报 `options.up=true`、`options.uv=false`、`options.makeCredUvNotRqd=true`。
-- `getInfo` 里的 `options.clientPin` 会跟随“是否已设置 PIN”变化。
-- attestation 当前固定返回 `"none"`。
-- 新创建的凭据当前一律按 discoverable credential 保存。
+- Debug HID
+- `CTAPHID_DIAG (0x40)`
 
-当前代码的含义是：
+`DIAG 1/2/5/6/7/8` exist whenever Debug HID is enabled. `DIAG 3/4` additionally depend on `MEOWKEY_ENABLE_DANGEROUS_DEBUG_COMMANDS`.
 
-- 设备支持标准 CTAP2 基本注册/断言闭环。
-- 内建 UV 能力并未声明为 `uv=true`；当前 UV 语义来自 `clientPIN` 路径，而不是更强的本地验证硬件。
+### 3. CTAP2 / WebAuthn Semantics
 
-## 4. User Presence 当前如何工作
+`getInfo` currently reports:
 
-- 固件会把一份 UP baseline 持久化到 Flash。
-- 另外还支持一份仅当前上电有效的会话态 UP 覆盖，不落盘。
-- 当前配置项包括 `source`、`gpioPin`、`gpioActiveLow`、`tapCount`、`gestureWindowMs`、`requestTimeoutMs`。
-- 默认编译配置是 `source=bootsel`、`tapCount=2`、`gestureWindowMs=750`、`requestTimeoutMs=8000`。
-- `source=none` 时，运行时 UP 直接放行。
-- `source=bootsel` 时，当前板卡默认走双击 `BOOTSEL`。
-- `source=gpio` 时，走单独 GPIO 输入并按配置解释高低电平。
+- `versions=["FIDO_2_0"]`
+- `extensions=["hmac-secret"]`
+- `options.up=true`
+- `options.uv=false`
+- `options.makeCredUvNotRqd=true`
+- `options.clientPin` tracking actual PIN configuration state
 
-当前命令路径上的 UP 规则是：
+Attestation is fixed to `"none"`.
 
-- `makeCredential` 每次都会走一次 UP 检查。
-- `getAssertion` 每次都会走一次 UP 检查，除非命中最近一次成功断言留下的一次性复用窗口。
-- 这个复用窗口只用于 `getAssertion`。
-- 这个复用窗口只允许复用一次。
-- 这个复用窗口只有在前一次 `getAssertion` 成功后才会被设置。
-- 当前窗口时长是 `1200ms`。
-- 当前匹配键已经改成解析后的请求指纹，所以语义一致但 CBOR 字节序不同的重试也会命中。
-- `getNextAssertion` 依赖前一次 `getAssertion` 留下的 pending state，不会再额外要求一次新的 UP。
+### 4. User Presence
 
-安全上的直接含义是：
+Current UP configuration supports:
 
-- `source=none` 会让后续注册/断言失去物理确认。
-- debug 构建上的主机可通过 Debug HID `DIAG 6` 持久化改写 baseline，也可通过 `DIAG 7` 只改当前上电会话。
-- 当前 `hardened` 启动不会信任 legacy 或 Debug HID 写入的持久化 UP 配置；一旦检测到这类状态，会回退到编译默认值并重新落盘。
+- `source`
+- `gpioPin`
+- `gpioActiveLow`
+- `tapCount`
+- `gestureWindowMs`
+- `requestTimeoutMs`
 
-## 5. Client PIN / UV 当前如何工作
+Default board behavior for `meowkey_rp2350_usb` is:
 
-- 当前只支持 `pinUvAuthProtocol=1`。
-- 当前支持的 `clientPIN` 子命令只有：
-  `getRetries`、`getKeyAgreement`、`setPin`、`changePin`、`getPinToken`。
-- `getPinTokenWithPermissions` 当前明确拒绝，不实现权限范围模型。
-- 运行时 `pinUvAuthToken` 是 32 字节，仅存在于当前上电会话。
-- token 生命周期当前是 `30000ms`。
-- 每次成功执行 `getPinToken` 都会重新签发新 token。
-- `setPin` / `changePin` 成功后会清掉旧 token。
-- 重启后旧 token 也会自然失效。
+- `source=bootsel`
+- `tapCount=2`
+- `gestureWindowMs=750`
+- `requestTimeoutMs=8000`
 
-PIN 状态当前是这样保存和校验的：
+Rules:
 
-- Flash 中持久化的是 PIN 是否已设置、剩余重试次数、以及 SHA-256 前 16 字节形式的 `pinHash`。
-- PIN 校验失败会消耗一次重试并立刻持久化。
-- 成功拿到 `getPinToken` 后，重试次数会重置到默认值 `8`。
-- 重试数归零后会返回 `PIN_BLOCKED`，且这个状态跨重启保留。
-- HMAC / `pinHash` 比较路径当前使用常量时间风格比较。
+- `makeCredential` requires UP
+- `getAssertion` requires UP, unless it hits the short one-shot retry reuse window
+- `getNextAssertion` reuses pending assertion state and does not ask again
 
-当前 UV 语义还要注意两点：
+Debug HID can still change persisted or session-only UP state in debug builds.
 
-- 如果请求要求 `uv=true`，代码实际依赖的是合法 `pinUvAuthParam`，不是独立本地验证硬件。
-- 即便请求本身不强制 `uv=true`，只要提供了合法 `pinUvAuthParam`，当前 `makeCredential` / `getAssertion` 仍会把本次操作视为 `user_verified`。
+### 5. Client PIN and UV Semantics
 
-这会影响两个输出：
+Current `clientPIN` support includes:
 
-- 断言 / 注册返回的 `authData` 会带上 UV bit。
-- `hmac-secret` 会在 `cred_random_with_uv` 和 `cred_random_without_uv` 两套种子之间切换。
+- `getRetries`
+- `getKeyAgreement`
+- `setPin`
+- `changePin`
+- `getPinToken`
 
-## 6. `hmac-secret` 的当前边界
+It does not include permission-scoped tokens.
 
-- `makeCredential` 如果请求了 `hmac-secret`，会在 attested authData 里写扩展声明。
-- `getAssertion` 支持 `hmac-secret` 解密与回包。
-- `hmac-secret` 当前仍复用 `clientPIN` 的 ECDH shared secret 能力。
-- 如果本次断言带有合法 UV，则使用 `cred_random_with_uv`。
-- 否则使用 `cred_random_without_uv`。
+Current PIN behavior:
 
-这保证了：
+- only `pinUvAuthProtocol=1`
+- runtime token is 32 bytes
+- token is session-only
+- token expires after `30000ms`
+- successful `getPinToken` rotates it
+- `setPin` / `changePin` clears prior runtime token state
 
-- 同一凭据在 UV / 非 UV 两种状态下不会产出同一组 `hmac-secret` 派生结果。
+ECDH peer public keys are validated before shared-secret derivation.
 
-## 7. 凭据与状态当前如何落盘
+### 6. `hmac-secret`
 
-- 主存储格式当前是 `version 6`。
-- Flash 尾部保留区当前拆成“主凭据区 + signCount journal”两部分。
-- 主凭据区使用 A/B 槽提交，并带 `generation` / `payload_crc32` / `header_crc32`。
-- journal header 会绑定当前主区的 `store_version`、`store_generation`、`store_payload_crc32`。
-- `signCount` 更新优先写 journal；journal 满了以后会把当前视图压实进新的主槽。
+Current behavior:
 
-当前持久化到普通 Flash 的内容包括：
+- `makeCredential` can declare `hmac-secret`
+- `getAssertion` can decrypt salts and return encrypted secrets
+- UV and non-UV requests derive from different `credRandom` seeds
+
+This means one credential does not produce the same `hmac-secret` material for UV and non-UV flows.
+
+### 7. Credential and State Persistence
+
+The current on-flash store includes:
+
+- private keys
+- credential IDs
+- RP IDs
+- user metadata
+- `credRandom`
+- sign counts
+- PIN hash
+- PIN retries
+- UP config
+
+Current format is `version 6`.
+
+What the store already does:
+
+- transactional A/B main store
+- generation and CRC checks
+- sign-count journal bound to the active store image
+- at-rest wrapping with device-bound material
+
+What it still does not do:
+
+- wear leveling
+- hardware-backed non-exportable keys
+- secure-element-style isolation from trusted-but-buggy firmware
+
+### 8. Debug HID Impact
+
+When Debug HID is enabled, the host can:
+
+- inspect diagnostics
+- read current UP state
+- change persisted UP state
+- change session-only UP state
+- optionally list credentials
+- optionally clear credentials
+
+That is why the debug path must be treated as a developer-only trust mode.
+
+### 9. Sensitive Intermediate Handling
+
+Current code now scrubs several security-relevant intermediates after use, especially in:
+
+- shared-secret derivation paths
+- assertion signing paths
+- `hmac-secret` handling
+- make-credential response construction
+
+That improves stack hygiene, but it is still not the same thing as a repository-wide formal sensitive-data lifecycle policy.
+
+### 10. Practical Conclusion
+
+Today the codebase provides:
+
+- a working CTAP2 registration and assertion loop
+- configurable UP
+- basic Client PIN
+- transactional flash persistence
+
+It does not yet provide:
+
+- a finished hardware secret boundary
+- full permission-scoped management
+- a production-style provisioning and recovery system
+
+## 中文
+
+这份文档只描述当前代码已经实现出来的安全行为，不把未来规划写成既成事实。
+
+### 1. 构建档位与信任边界
+
+- `debug`：同时暴露 FIDO HID 和 Debug HID
+- `hardened`：只保留标准 FIDO HID
+- `probe`：独立的板卡探测镜像
+
+最重要的判断很简单：
+
+- `debug` 不能被当作可信认证器边界
+- `hardened` 只是去掉开发后门后的较小攻击面基线，但仍然没有形成硬件支持的机密边界
+- RP2350 在当前项目里不被当作安全元件
+
+### 2. 对外暴露的接口
+
+始终存在：
+
+- 标准 FIDO HID
+
+仅在 debug 下存在：
+
+- Debug HID
+- `CTAPHID_DIAG (0x40)`
+
+只要 Debug HID 开着，`DIAG 1/2/5/6/7/8` 就会存在；`DIAG 3/4` 还需要 `MEOWKEY_ENABLE_DANGEROUS_DEBUG_COMMANDS`。
+
+### 3. CTAP2 / WebAuthn 语义
+
+`getInfo` 当前上报：
+
+- `versions=["FIDO_2_0"]`
+- `extensions=["hmac-secret"]`
+- `options.up=true`
+- `options.uv=false`
+- `options.makeCredUvNotRqd=true`
+- `options.clientPin` 会跟随实际 PIN 状态变化
+
+Attestation 仍然固定为 `"none"`。
+
+### 4. User Presence
+
+当前 UP 配置项包括：
+
+- `source`
+- `gpioPin`
+- `gpioActiveLow`
+- `tapCount`
+- `gestureWindowMs`
+- `requestTimeoutMs`
+
+`meowkey_rp2350_usb` 的默认行为是：
+
+- `source=bootsel`
+- `tapCount=2`
+- `gestureWindowMs=750`
+- `requestTimeoutMs=8000`
+
+规则上：
+
+- `makeCredential` 需要 UP
+- `getAssertion` 需要 UP，除非命中很短的一次性重试复用窗口
+- `getNextAssertion` 复用 pending assertion 状态，不再重复要求新的 UP
+
+在 debug 构建里，Debug HID 仍然可以改写持久化或会话态的 UP 状态。
+
+### 5. Client PIN 与 UV 语义
+
+当前 `clientPIN` 支持：
+
+- `getRetries`
+- `getKeyAgreement`
+- `setPin`
+- `changePin`
+- `getPinToken`
+
+但还不支持权限范围 token。
+
+当前 PIN 行为包括：
+
+- 只支持 `pinUvAuthProtocol=1`
+- 运行时 token 长度为 32 字节
+- token 只存在于当前会话
+- token 在 `30000ms` 后过期
+- 每次成功执行 `getPinToken` 都会轮换
+- `setPin` / `changePin` 会清掉旧的运行时 token 状态
+
+ECDH 对端公钥在共享密钥推导前会先做显式校验。
+
+### 6. `hmac-secret`
+
+当前行为是：
+
+- `makeCredential` 可以声明 `hmac-secret`
+- `getAssertion` 可以解密 salt 并返回重新加密后的 secret
+- UV 和非 UV 路径会使用不同的 `credRandom` 种子
+
+这意味着同一凭据不会在 UV 和非 UV 流程里产出同一份 `hmac-secret` 派生结果。
+
+### 7. 凭据与状态持久化
+
+当前会落盘的内容包括：
 
 - 私钥
-- `credentialId`
+- credential ID
 - RP ID
-- 用户 ID / 用户名 / 显示名
-- `credRandom` 的 UV / 非 UV 两份种子
-- `signCount`
+- 用户元数据
+- `credRandom`
+- sign count
 - PIN 哈希
 - PIN 重试计数
 - UP 配置
 
-当前存储层已经做到的事：
+当前格式版本为 `version 6`。
 
-- 主区掉电一致性比早期整区重写更强。
-- `signCount` 不再要求每次断言都重写整个主区。
-- journal 不会跨错的主区代际直接复用。
-- 主区 payload 当前已经改成用设备唯一材料派生出的密钥做 at-rest wrapping，并附带 keyed tag 校验。
+存储层已经做到：
 
-当前仍然没有做到的事：
+- 主区 A/B 事务提交
+- generation 与 CRC 校验
+- 与主区绑定的 sign-count journal
+- 基于设备唯一材料的 at-rest wrapping
+
+还没有做到：
 
 - 磨损均衡
-- 安全元件 / OTP 绑定的机密保护
-- 真正不可导出的密钥边界
+- 硬件支持的不可导出密钥
+- 像安全元件那样把秘密与“能跑在 MCU 上的固件”隔离开
 
-另外还有两个容易误解的点：
+### 8. Debug HID 的影响
 
-- Debug HID 的“清空凭据存储”只会清掉 credential slots，不会清掉 PIN 状态和 UP 配置。
-- `DIAG 6` 写入的 UP baseline 会在 debug 重刷之间保留；`DIAG 7` 的会话态覆盖只在当前上电有效。
-- 当前 `hardened` 启动会拒绝继承 legacy 或 Debug HID 写入的持久化 UP 状态，并恢复到编译默认值。
+只要 Debug HID 开着，主机就能：
 
-## 8. Debug HID 当前到底能做什么
+- 看诊断日志
+- 读当前 UP 状态
+- 改持久化 UP 状态
+- 改会话态 UP 状态
+- 在危险命令开启时列出凭据
+- 在危险命令开启时清空凭据
 
-- `DIAG 1` 读取诊断日志快照。
-- `DIAG 2` 清空诊断日志。
-- `DIAG 5` 读取当前生效的 UP 配置摘要，并附带持久化 baseline 摘要。
-- `DIAG 6` 写入新的持久化 UP 配置。
-- `DIAG 7` 写入新的会话态 UP 配置，仅影响当前上电。
-- `DIAG 8` 清除会话态 UP 覆盖，恢复到当前持久化 baseline。
+这也是为什么 debug 路径必须被当作开发者模式，而不是普通认证器模式。
 
-如果编译了危险调试命令，还会额外支持：
+### 9. 敏感中间态处理
 
-- `DIAG 3` 清空凭据槽位。
-- `DIAG 4` 列出凭据摘要。
+当前代码已经会在几个关键路径上清理安全相关中间缓冲区，尤其包括：
 
-`DIAG 4` 当前不会导出私钥，但会泄露：
+- 共享密钥推导路径
+- 断言签名路径
+- `hmac-secret` 路径
+- make-credential 响应构造路径
 
-- RP ID
-- 用户名
-- signCount
-- credential ID 前缀
-- 当前 store 摘要
+这能改善栈上数据卫生，但仍然不等于仓库已经建立了统一、形式化的敏感数据生命周期策略。
 
-因此在 debug 构建上：
+### 10. 实际结论
 
-- 主机不仅能观察调试状态，还能改变后续认证策略。
-- 把 `source` 写成 `none` 后，设备会在当前会话里立即跳过物理确认。
-- 如果通过 `DIAG 6` 改写持久化 baseline，这个状态会在后续 debug 重刷之间保留，直到配置被改回去。
-- 当前 `hardened` 启动会拒绝继承 legacy / Debug HID 持久化的 UP 状态，所以风险重点不再是“debug 可永久降级 hardened”，而是“debug 会污染 debug 自身的后续状态，并破坏当下会话的物理确认语义”。
+今天的代码已经具备：
 
-## 9. 当前最主要的剩余安全问题
-
-- 私钥、`credRandom`、PIN 哈希虽然已经不再直接明文落盘，但当前 wrapping 仍依赖主 MCU 可访问的设备唯一材料，不等于安全元件或真正不可导出的密钥边界。
-- 当前 UV 只是 PIN 语义，没有更强的本地受信输入。
-- 当前没有权限范围 token，也没有基于 RP 的细粒度授权。
-- 仓库已经支持可选的 secure boot / OTP / anti-rollback 构建链路，但默认不替用户烧录 OTP，也还没有量产级 provisioning / 恢复流程。
-- `webauthn.c` 里的部分敏感临时缓冲区仍未系统清零，特别是 `hmac-secret` 和签名相关的中间数据。
-- debug 构建上的 Debug HID 仍然足以破坏“未来每次操作都要物理确认”的假设。
-
-## 10. 结论
-
-当前代码已经具备：
-
-- 可用的 FIDO/CTAP2 最小闭环
+- 可工作的 CTAP2 注册 / 断言闭环
 - 可配置的 UP
-- 基础的 Client PIN
-- 初版事务化存储
+- 基础版 Client PIN
+- 事务化 Flash 持久化
 
-但它仍然不是量产安全认证器。更准确的描述是：
+但它还不具备：
 
-- `debug` 构建是协议联调设备。
-- `hardened` 构建是去掉开发后门后的较小攻击面基线。
-- 真正的不可导出私钥边界、量产恢复链路和硬件级机密保护都还没有完成。
+- 完整的硬件机密边界
+- 权限范围完整的管理模型
+- 类似量产系统那样完整的 provisioning 与恢复流程

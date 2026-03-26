@@ -1,26 +1,18 @@
-# 固件逻辑遗漏与后续优先级
+# Known Gaps
 
-这个文件只记录“现有代码已经暴露出来的真实缺口”，不写空泛 roadmap。
+## English
 
-## 1. 协议层缺口
+This file tracks the gaps that are visible in the current codebase. It is not a generic future roadmap.
 
-### 1.1 凭据管理命令仍缺失
+### 1. Protocol Gaps
 
-固件内部已经能：
+Credential management is still incomplete. The firmware can store credentials, list summaries through Debug HID, and clear all slots through Debug HID, but it does not expose a standard in-device management flow for:
 
-- 存储凭据
-- 列出凭据摘要（仅 Debug HID）
-- 清空全部凭据（仅 Debug HID）
+- deleting one credential at a time
+- enumerating structured metadata for all credentials
+- protected management commands with permission scope
 
-但还没有标准化的设备内管理命令：
-
-- 按凭据删除
-- 枚举全部凭据并带结构化元数据
-- 受权限保护的管理接口
-
-### 1.2 `clientPIN` 仍未覆盖权限模型
-
-当前支持：
+`clientPIN` also remains incomplete. Current support covers:
 
 - `getRetries`
 - `getKeyAgreement`
@@ -28,100 +20,162 @@
 - `changePin`
 - `getPinToken`
 
-仍缺：
+Still missing:
 
 - `getPinTokenWithPermissions`
-- RP 绑定的权限令牌
-- 更细粒度的权限校验
+- RP-scoped permission tokens
+- finer-grained authorization checks
 
-### 1.3 CTAPHID 控制命令未完整
-
-未真正实现：
+CTAPHID coverage is also partial:
 
 - `CANCEL`
 - `LOCK`
 - `WINK`
-- 更严格的 busy / channel arbitration
+- stricter busy / arbitration rules
 
-### 1.4 Attestation 仍固定为 `none`
+Attestation is still fixed to `none`.
 
-这适合开发期，但不适合需要设备身份链的发行版。
+### 2. Security Gaps
 
-## 2. 安全面缺口
+The storage layer is transactional now, but it is not a finished secure-storage design. What exists today:
 
-### 2.1 存储层已经事务化，但还不是量产级 secure storage
+- A/B slots
+- generation and CRC tracking
+- sign-count journal binding to the active store image
 
-当前已经有：
+What still does not exist:
 
-- A/B slot
-- 主区 `generation/crc`
-- journal 与主区版本绑定
+- wear leveling
+- per-record updates
+- hardware-backed non-exportable key storage
 
-但当前仍然没有：
+Private keys, `credRandom`, and PIN material are wrapped with device-bound material, but that is still MCU-side protection, not a secure-element boundary.
+
+User presence is still basic:
+
+- current default path is double-tap `BOOTSEL`
+- GPIO-based UP is configurable
+- a stronger trusted local confirmation path is still absent
+
+Signed boot and anti-rollback are available as optional building blocks, but the repository still does not define a full provisioning, update, or recovery process.
+
+Sensitive buffer scrubbing has improved on the main `clientPIN`, signing, and `hmac-secret` paths, but there is still no single project-wide abstraction for every sensitive transient buffer.
+
+### 3. Tooling and Operational Gaps
+
+Desktop tooling depends on Debug HID, which means:
+
+- development and hardened builds are intentionally split
+- the WebUI and Rust manager are still developer tools, not a normal end-user control surface
+
+CI can currently validate:
+
+- firmware builds
+- probe firmware builds
+- desktop compilation checks
+- release packaging
+
+CI still cannot validate:
+
+- real hardware plug / unplug behavior
+- browser compatibility across real hosts
+- formal FIDO conformance
+
+### 4. Practical Priorities
+
+The next useful priorities are:
+
+1. improve storage behavior and update granularity
+2. add permission-scoped credential management
+3. connect UP / GPIO configuration to real UI flows
+4. stabilize the secure-boot and rollback policy after update / recovery paths are clearer
+
+## 中文
+
+这个文件只记录当前代码已经暴露出来的真实缺口，不写空泛 roadmap。
+
+### 1. 协议层缺口
+
+凭据管理仍然不完整。固件已经能存储凭据、通过 Debug HID 列出摘要、通过 Debug HID 清空所有槽位，但还没有标准化的设备内管理接口来完成：
+
+- 按单条凭据删除
+- 枚举全部凭据并返回结构化元数据
+- 带权限范围控制的管理命令
+
+`clientPIN` 也还没有覆盖完整权限模型。当前支持的是：
+
+- `getRetries`
+- `getKeyAgreement`
+- `setPin`
+- `changePin`
+- `getPinToken`
+
+仍然缺少：
+
+- `getPinTokenWithPermissions`
+- 与 RP 绑定的权限 token
+- 更细粒度的授权校验
+
+CTAPHID 控制命令也还不完整：
+
+- `CANCEL`
+- `LOCK`
+- `WINK`
+- 更严格的 busy / arbitration 规则
+
+Attestation 目前仍固定为 `none`。
+
+### 2. 安全面缺口
+
+存储层虽然已经事务化，但还不是一个完整的 secure storage 方案。当前已经有：
+
+- A/B 槽
+- generation 和 CRC 校验
+- 与主存储绑定的 sign-count journal
+
+仍然没有：
 
 - 磨损均衡
-- per-record update
-- 加密或硬件保护的私钥存储
+- per-record 更新
+- 硬件支持的不可导出私钥边界
 
-### 2.2 私钥与 PIN 材料已经做了设备绑定 wrapping，但还不是硬件边界
+私钥、`credRandom` 和 PIN 材料现在已经做了设备绑定 wrapping，但这仍然只是 MCU 侧保护，不是安全元件级边界。
 
-当前已经不再把这些材料直接明文写进 store payload，但 wrapping 仍由主 MCU 固件解包，也还没有安全元件或真正的不可导出私钥边界。
+用户在场链路也仍然比较基础：
 
-### 2.3 用户在场链路仍是基础版
+- 当前默认路径是双击 `BOOTSEL`
+- GPIO 型 UP 已经可配置
+- 更强的本地可信确认路径还没有落地
 
-当前已经有默认的物理 UP 路径：
+Signed boot 和 anti-rollback 已经有可选构建块，但仓库仍然没有完整的 provisioning、升级和恢复流程定义。
 
-- 双击 BOOTSEL
+敏感缓冲区清理已经在主要的 `clientPIN`、签名和 `hmac-secret` 路径上有所改善，但项目里仍然没有统一覆盖所有敏感临时缓冲区的抽象。
 
-并且已经预留了后续切到外接 GPIO 按键的持久化配置接口。
+### 3. 工具链与运维缺口
 
-但还没有：
+桌面工具依赖 Debug HID，这意味着：
 
-- 更强的硬件确认链路
-- 指纹 / 安全元件
-- 完整的 UI 管理入口
+- 开发构建和硬化构建会天然分叉
+- WebUI 和 Rust 管理器仍然只是开发工具，不是普通用户控制面
 
-另外，debug 构建当前还能通过 Debug HID 改写这条 UP 策略，包括持久化 baseline 和当前会话覆盖，所以调试固件上的 UP 不应被当作安全边界。
-
-### 2.4 安全启动与回滚保护还没进入量产策略
-
-仓库现在已经支持可选签名镜像、OTP 公钥哈希材料输出和 anti-rollback metadata，但默认仍是开发态：
-
-- 不会替用户自动烧写 OTP 公钥哈希
-- 是否真正启用 anti-rollback 仍取决于用户 provisioning
-- 仍未建立量产更新 / 恢复流程
-
-### 2.5 敏感临时缓冲区仍未系统清零
-
-`clientPIN` 的关键路径已经补了较多清零，但 `webauthn` 里的 `hmac-secret` 和签名中间数据仍没有形成统一的敏感缓冲区清理策略。
-
-## 3. 工具链与运维缺口
-
-### 3.1 调试工具依赖 Debug HID
-
-这对开发友好，但也意味着：
-
-- 生产固件与调试固件天然分叉
-- WebUI / Rust 管理器当前不能作为正式终端管理器使用
-
-### 3.2 自动化仍缺板上实机测试
-
-当前新增的 CI 能做的是：
+CI 目前能做的是：
 
 - 固件构建
-- `probe` 固件构建
+- probe 固件构建
 - 桌面工具编译检查
 - 发布打包
 
-仍做不到：
+CI 还做不到：
 
-- 真机插拔测试
-- 浏览器兼容性测试
-- FIDO conformance
+- 真机插拔与板上行为验证
+- 真实主机环境下的浏览器兼容性验证
+- 正式 FIDO 一致性测试
 
-## 4. 当前优先级建议
+### 4. 当前更实用的优先级
 
-1. 先把存储层改成更安全的增量更新或双写策略。
-2. 然后实现受权限保护的 credential management。
-3. 再把 UP/外接按键配置真正接到 UI。
-4. 等协议和升级流程稳定后，再冻结 secure boot / rollback policy。
+目前更值得继续推进的顺序是：
+
+1. 继续改进存储层和增量更新策略
+2. 实现带权限范围的 credential management
+3. 把 UP / GPIO 配置真正接入 UI
+4. 在升级 / 恢复路径更清晰后，再收紧 secure boot 与 rollback policy

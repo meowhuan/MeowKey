@@ -1,73 +1,137 @@
-# 安全说明
+# Security Guide
 
-## 1. 当前安全基线
+## English
 
-MeowKey 仍然是开发期认证器，安全边界应该分三档理解：
+### 1. Current Baseline
 
-- `debug`
-  面向开发联调，默认不安全。
-- `hardened`
-  关闭 Debug HID，是更接近分发的较小攻击面基线，但仍不是量产设计。
-- `probe`
-  板卡探测镜像，不应被当作长期认证器固件。
+MeowKey is best understood in three modes:
 
-如果你需要看代码级别的真实行为，而不是高层摘要，请直接看 [docs/security-model.md](docs/security-model.md)。
+- `debug`: for bring-up and protocol inspection; not a trustworthy security boundary
+- `hardened`: smaller attack surface for personal or community distribution
+- `probe`: board-discovery image, not a long-term authenticator firmware
 
-## 2. 当前已经落实的收紧项
+This project is being documented for personal use and open-source redistribution. That means the guidance here focuses on practical host trust, board trust, and firmware trust, not on factory assumptions.
 
-- Debug HID 可以通过 `-DMEOWKEY_ENABLE_DEBUG_HID=OFF` 或 `-DisableDebugHid` 彻底关闭。
-- 危险调试命令 `DIAG 3/4` 现在和 Debug HID 分开编译控制，不再和所有构建强绑定。
-- `pinUvAuthToken` 只存在于当前上电会话，每次 `getPinToken` 重签，生命周期当前为 `30000ms`。
-- `getPinTokenWithPermissions` 当前明确拒绝，不伪装成“部分支持”。
-- PIN 相关 HMAC / 哈希比较路径已经使用常量时间风格比较。
-- 主存储区已经是 `version 6` 的 A/B 事务提交，`signCount` 也已经拆到独立 journal。
-- 当前已经支持可选的 RP2350 secure boot 签名镜像、OTP 公钥哈希材料输出和 anti-rollback 元数据。
+### 2. Hardening Already in Place
 
-## 3. 当前最需要注意的真实边界
+Current implemented tightening includes:
 
-- 只要 Debug HID 还开着，主机就仍然能读取日志，并且能通过 `DIAG 6` 持久化改写 UP 配置，或通过 `DIAG 7` 只改当前上电会话。
-- 这意味着 debug 构建上的主机可以把 `source` 改成 `none`，从而让当前会话立即跳过物理确认；如果写入持久化 baseline，这个状态还会污染后续 debug 重刷。
-- 当前 `hardened` 启动会拒绝继承 legacy 或 Debug HID 写入的持久化 UP 配置，并回退到编译默认值，避免 debug 状态继续污染后续 hardened 行为。
-- `hardened` 构建虽然去掉了 Debug HID，但私钥、`credRandom`、PIN 哈希当前也只是用设备唯一材料做 at-rest wrapping，不等于已经进入硬件机密边界。
-- 当前 UV 只是 Client PIN 语义，不是更强的本地受信验证硬件。
-- 当前 `getAssertion` 还包含一个一次性 `1200ms` UP 复用窗口，用于同一语义请求的快速重试；这是有边界的可用性折中，不是长期豁免。
+- Debug HID can be compiled out completely
+- dangerous credential-list / credential-clear commands are separately gated
+- runtime `pinUvAuthToken` is session-only and expires after `30000ms`
+- `getPinTokenWithPermissions` is explicitly rejected instead of pretending to be partially supported
+- PIN-related HMAC and hash comparisons use constant-time style checks
+- ECDH peer public keys are validated before shared-secret derivation
+- sensitive intermediates on the main `clientPIN`, signing, and `hmac-secret` paths are scrubbed after use
+- the main credential store is transactional, and sign counts are journaled separately
+- optional RP2350 signed boot, OTP hash material generation, and anti-rollback metadata are available
 
-## 4. 仍然存在的主要风险
+### 3. Real Boundaries Today
 
-- 私钥、`credRandom`、PIN 哈希当前已不再直接明文落盘，但 wrapping 仍由主 MCU 固件解包，不等于安全元件或不可导出密钥边界。
-- 当前没有权限范围 token，也没有基于 RP 的细粒度授权模型。
-- 当前已经有可选的 secure boot / OTP / anti-rollback 支持链路，但默认不替用户烧录 OTP，也还没有量产级 provisioning / 恢复流程。
-- `webauthn.c` 里的部分敏感中间缓冲区仍未系统化清零。
-- 当前 UP / UV 仍然只是开发期可用实现，不是量产级的人机交互与本地验证方案。
+Important facts that should not be hidden:
 
-## 5. 使用建议
+- if Debug HID is enabled, the host can still inspect logs and modify UP behavior
+- hardened startup rejects legacy or Debug HID-derived persisted UP state
+- private keys, `credRandom`, and PIN hash are wrapped at rest, but a hostile firmware that already runs on the MCU is still inside the trust boundary
+- current UV behavior is Client PIN semantics, not a separate trusted local verifier
+- `getAssertion` still allows one short UP reuse window for retry convenience
 
-### 5.1 开发联调
+### 4. Remaining Risks
 
-可以使用 debug 构建，但应默认认为：
+- there is no secure element and no hardware-backed non-exportable key boundary
+- there are no permission-scoped tokens or RP-scoped authorization rules yet
+- signed boot and anti-rollback remain opt-in and do not by themselves define provisioning or recovery
+- storage still has no wear leveling
+- desktop tools still depend on Debug HID, so the debug path remains intentionally more powerful than the hardened path
 
-- 主机环境是可信的。
-- 设备不是保密边界。
-- 调试接口足以改变后续认证策略。
+### 5. Recommended Use
 
-### 5.2 对外分发前
+For local development:
 
-至少做到：
+- assume the host is trusted
+- treat the device as a protocol and firmware test target
+- expect Debug HID to be security-relevant
 
-1. 使用 `hardened` 构建，彻底关闭 Debug HID。
-2. 如果你信任本项目并希望保护设备数据，启用 secure boot，并在确认无误后烧录 OTP 公钥哈希。
-3. 重构敏感材料的落盘保护策略。
-4. 明确最终的 UP / UV 硬件方案。
-5. 做真实设备级升级、恢复和掉电测试。
+For personal or community redistribution:
 
-## 6. 不应该误判的事情
+1. build the hardened variant
+2. keep Debug HID disabled
+3. decide deliberately whether signed boot and OTP programming fit your threat model
+4. test UP behavior, upgrades, and recovery on real hardware
 
-以下结论目前都不成立：
+### 6. What You Should Not Assume
 
-- “能注册和断言，所以已经是安全认证器”
-- “CI 能过，所以已经适合量产”
-- “支持签名镜像入口，所以 secure boot 已经完成”
-- “RP2350 当前就等于安全元件”
-- “有 PIN，所以已经具备完整 UV”
+The following statements are still false:
 
-当前更准确的描述是：MeowKey 已经具备可调试的认证器功能骨架，并开始形成较清晰的安全边界，但距离量产安全设计还有明显距离。
+- "it registers and asserts, therefore it is already a finished secure authenticator"
+- "it has PIN support, therefore UV is complete"
+- "it supports signed boot inputs, therefore provisioning is complete"
+- "it runs on RP2350, therefore it has a secure-element boundary"
+
+## 中文
+
+### 1. 当前安全基线
+
+MeowKey 目前最好按三种模式来理解：
+
+- `debug`：用于 bring-up 和协议联调，不能当作可信安全边界
+- `hardened`：更适合个人分发和社区分发的较小攻击面基线
+- `probe`：只用于底板识别，不是长期认证器固件
+
+这个项目现在以个人使用和开源分发为中心来写文档，所以这里讨论的重点是主机信任边界、底板信任边界和固件信任边界，而不是假设已经存在工厂级控制流程。
+
+### 2. 已经落实的收紧项
+
+当前已经落实的安全收紧包括：
+
+- Debug HID 可以在编译期彻底关闭
+- 危险的列凭据 / 清凭据命令已经和普通调试能力分开门控
+- 运行时 `pinUvAuthToken` 只存在于当前会话，并在 `30000ms` 后过期
+- `getPinTokenWithPermissions` 会被明确拒绝，而不是伪装成“部分支持”
+- PIN 相关 HMAC 与哈希比较路径使用常量时间风格比较
+- ECDH 对端公钥在共享密钥推导前会做显式校验
+- 主要 `clientPIN`、签名和 `hmac-secret` 路径上的敏感中间缓冲区会在使用后清零
+- 主凭据存储区已经事务化，`signCount` 也走独立 journal
+- 可选的 RP2350 signed boot、OTP 哈希材料输出和 anti-rollback metadata 已经具备
+
+### 3. 当前真实边界
+
+几个必须正视的事实：
+
+- 只要 Debug HID 还开着，主机就仍然能读取日志并改写 UP 行为
+- `hardened` 启动会拒绝继承 legacy 或 Debug HID 写入的持久化 UP 状态
+- 私钥、`credRandom` 和 PIN 哈希虽然已经做了 at-rest wrapping，但如果恶意固件已经能在 MCU 上运行，它仍然处在信任边界内部
+- 当前 UV 语义本质上还是 Client PIN，不是独立的本地可信验证器
+- `getAssertion` 仍然保留一个很短的一次性 UP 复用窗口，用于重试可用性
+
+### 4. 仍然存在的风险
+
+- 目前没有安全元件，也没有硬件支持的不可导出私钥边界
+- 还没有权限范围 token，也没有 RP 绑定的细粒度授权规则
+- signed boot 和 anti-rollback 仍然是可选能力，本身不等于 provisioning / 恢复流程已经完整
+- 存储层仍然没有磨损均衡
+- 桌面工具依赖 Debug HID，因此 debug 路径仍然会比 hardened 路径拥有更多能力
+
+### 5. 使用建议
+
+本地开发阶段：
+
+- 默认把主机视为可信
+- 把设备当作协议和固件测试目标
+- 明确认识到 Debug HID 本身就是安全相关能力
+
+个人使用或社区分发阶段：
+
+1. 优先构建 `hardened` 变体
+2. 确保 Debug HID 关闭
+3. 结合自己的威胁模型，再决定是否启用 signed boot 与 OTP 烧录
+4. 在真实硬件上验证 UP、升级和恢复路径
+
+### 6. 不应该误判的事情
+
+下面这些判断现在都还不成立：
+
+- “能注册和断言，所以已经是完整安全认证器”
+- “有 PIN，所以 UV 已经完成”
+- “支持 signed boot 入口，所以 provisioning 已经完整”
+- “运行在 RP2350 上，所以已经具备安全元件边界”

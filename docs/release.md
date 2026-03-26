@@ -1,68 +1,66 @@
-# CI 与发行流程
+# Release Workflow
 
-## 1. CI 现在检查什么
+## English
 
-GitHub Actions 的 `ci.yml` 会做两类检查。
+### 1. What CI Checks
 
-### 1.1 固件检查
+GitHub Actions currently runs two main groups of checks.
 
-在 Ubuntu 上执行：
+Firmware-side checks on Ubuntu:
 
-- `scripts/board-presets.json` JSON 解析校验
-- `scripts/gui_server.py` 语法校验
-- 默认开发固件离线构建
-- 关闭 Debug HID 的硬化固件离线构建
-- 临时签名密钥下的 secure-boot-ready 硬化固件构建
-- `probe` 固件离线构建
+- `scripts/board-presets.json` parsing
+- `scripts/gui_server.py` syntax validation
+- default offline firmware build
+- hardened offline firmware build
+- secure-boot-ready hardened build with a temporary signing key
+- probe firmware build
 
-这里使用系统安装的 `arm-none-eabi-gcc`、`cmake` 和 `ninja`，不依赖本地 `tools/`。
-同时会在 workflow 里显式拉取 `pico-sdk` `2.2.0` 及其子模块，不依赖仓库里是否包含 `third_party/pico-sdk`。
+Desktop-side checks on Windows:
 
-### 1.2 桌面工具检查
-
-在 Windows 上执行：
-
-- `scripts/probe-board.ps1` 样例输入冒烟检查
+- `scripts/probe-board.ps1` sample-input smoke test
 - `cargo check --locked --manifest-path native-rs/meowkey-manager/Cargo.toml`
 - `dotnet build native/MeowKey.Manager/MeowKey.Manager.csproj -c Release`
 
-## 2. 为什么 CI 不直接运行 `build.ps1`
+### 2. Why CI Does Not Use `build.ps1`
 
-因为：
+`build.ps1` is optimized for local Windows development. CI instead installs toolchain pieces directly and drives CMake explicitly, because:
 
-- `build.ps1` 偏向本地 Windows 开发环境
-- 仓库默认并不假设 `tools/` 会被提交到远端
-- GitHub Actions 更适合直接安装系统交叉编译器、拉取 `pico-sdk`，再通过 `-DPICO_SDK_PATH` 跑 CMake
+- `tools/` is ignored by Git
+- the workflow should not assume a pre-populated local toolchain directory
+- Linux CI is better aligned with direct CMake invocation
 
-本地开发仍然推荐用 `build.ps1`。
+### 3. Release Triggers
 
-## 3. Release 工作流
+`release.yml` runs on:
 
-`release.yml` 会在以下场景触发：
+- tags like `v0.2.0`
+- manual dispatch with an explicit version input
 
-- 推送形如 `v0.2.0` 的 tag
-- 手动触发并指定版本号
+The workflow is aimed at redistributable open-source packages that other users can flash or inspect, not at factory SKUs.
 
-工作流会构建以下发行包：
+### 4. Release Packages
+
+Current package families:
 
 - `generic-debug`
-  通用开发固件，保留 Debug HID。
 - `generic-hardened`
-  通用分发基线，关闭 Debug HID。
 - `generic-hardened-secure-boot-ready`
-  通用 secure-boot-ready 硬化固件；只有在 release workflow 配置了签名密钥 secret 时才会产出。
-- `preset-<preset-package-label>-debug`
-  预设匹配的开发固件，当前会为 `usb-a-baseboard-v1` 产出对应 zip。
-- `preset-<preset-package-label>-hardened`
-  预设匹配的硬化固件。
-- `preset-<preset-package-label>-hardened-secure-boot-ready`
-  预设匹配的 secure-boot-ready 硬化固件；同样依赖 release workflow 中的签名密钥 secret。
+- `preset-<label>-debug`
+- `preset-<label>-hardened`
+- `preset-<label>-hardened-secure-boot-ready`
 - `probe-board-id`
-  独立板卡探测固件，用于生成新的 preset 草案。
 
-## 4. Release 产物
+The secure-boot-ready variants appear only when the workflow runs inside the GitHub Actions Environment `release` and that environment has access to the signing key secret.
 
-所有 `generic-*` 与 `preset-*` 固件 zip 都会打包：
+The current GitHub Actions release workflow expects the environment secret:
+
+- `MEOWKEY_SECUREBOOT_PEM_B64`
+
+That value must be the base64-encoded contents of the PEM signing key. The workflow decodes it into `${{ github.workspace }}/.cache/meowkey-secureboot.pem` and then enables the secure-boot-ready package set. Do not keep this as a repository-wide secret if you want release-environment protection rules to apply.
+
+### 5. Release Contents
+
+Firmware archives include:
 
 - `meowkey.uf2`
 - `meowkey.bin`
@@ -74,11 +72,11 @@ GitHub Actions 的 `ci.yml` 会做两类检查。
 - `flash.ps1`
 - `flash.sh`
 
-`*-secure-boot-ready` 发行包在上述基础上还会额外包含：
+Secure-boot-ready archives additionally include:
 
 - `meowkey.otp.json`
 
-`probe-board-id` zip 会打包：
+Probe archives include:
 
 - `meowkey_probe.uf2`
 - `meowkey_probe.bin`
@@ -89,42 +87,37 @@ GitHub Actions 的 `ci.yml` 会做两类检查。
 - `flash.ps1`
 - `flash.sh`
 
-校验文件不再按 zip 单独拆分，而是统一放在：
+Checksums are collected in:
 
 - `SHA256SUMS.txt`
 
-GitHub Release 页面会直接附上全部 zip 包和这一份统一校验清单。
+### 6. Versioning
 
-## 5. 版本约定
-
-推荐使用：
+Recommended tags:
 
 - `v0.1.0`
 - `v0.2.0`
 - `v0.2.1`
 - `v0.2.0-beta.2`
 
-工作流会把 tag 解析为：
+The workflow derives:
 
 - `MEOWKEY_VERSION_MAJOR`
 - `MEOWKEY_VERSION_MINOR`
 - `MEOWKEY_VERSION_PATCH`
-- 可选的 `MEOWKEY_VERSION_LABEL`
+- optional `MEOWKEY_VERSION_LABEL`
 
-如果启用了 anti-rollback，默认 rollback 版本会按紧凑编码 `major * 64 + minor * 8 + patch` 生成；`minor` 和 `patch` 必须不大于 `7`。默认 12 个 rollback OTP 行可提供 `288` 个版本槽，扩展 row 列表后容量也会同步增加。`VersionLabel` 不参与比较。
+When anti-rollback is enabled, the default compact version encoding is `major * 64 + minor * 8 + patch`, so `minor` and `patch` must stay within `0..7`.
 
-正式 release 可以不带 `VersionLabel`；预发布 tag 会自动把 `-beta.2` 这类后缀写入 `VersionLabel`。
-同时，带后缀的 tag 也会在 GitHub Release 上自动标记为 `prerelease`；纯 `vX.Y.Z` 则继续作为正式 release 发布。
+### 7. Local Preflight
 
-## 6. 本地提交前建议
-
-### 6.1 Windows 本地
+Windows:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\check.ps1
 ```
 
-### 6.2 Linux / CI 风格
+CI-style CMake:
 
 ```bash
 cmake -S . -B build-ci -G Ninja -DPICO_BOARD=meowkey_rp2350_usb -DPICO_NO_PICOTOOL=ON
@@ -134,19 +127,151 @@ cmake --build build-ci-hardened
 cmake --build build-ci --target meowkey_probe
 ```
 
-## 7. 当前发布边界
+### 8. Release Boundary
 
-自动发布不代表“已经适合量产”。
+An automated release does not prove:
 
-release workflow 只保证：
+- FIDO conformance
+- board-specific correctness on real hardware
+- OTP programming on the target device
+- a factory-grade upgrade and recovery story
 
-- 固件能构建
-- 产物会被打包
-- generic / preset / probe / secure-boot-ready 四类用途可区分
+It proves only that the package set can be built and organized consistently.
 
-它不保证：
+## 中文
 
-- FIDO 认证通过
-- 板上真实行为正确
-- 用户已经把 OTP 公钥哈希真正烧录到设备
-- 存储层已经具备掉电安全
+### 1. CI 当前检查什么
+
+GitHub Actions 现在主要做两类检查。
+
+Ubuntu 上的固件检查：
+
+- `scripts/board-presets.json` 解析校验
+- `scripts/gui_server.py` 语法检查
+- 默认固件离线构建
+- 硬化固件离线构建
+- 使用临时签名密钥的 secure-boot-ready 硬化构建
+- probe 固件构建
+
+Windows 上的桌面工具检查：
+
+- `scripts/probe-board.ps1` 样例输入冒烟测试
+- `cargo check --locked --manifest-path native-rs/meowkey-manager/Cargo.toml`
+- `dotnet build native/MeowKey.Manager/MeowKey.Manager.csproj -c Release`
+
+### 2. 为什么 CI 不直接用 `build.ps1`
+
+`build.ps1` 更偏向本地 Windows 开发环境。CI 之所以改用显式安装工具链并直接调用 CMake，主要是因为：
+
+- `tools/` 默认被 Git 忽略
+- workflow 不应假设远端仓库天然带有本地工具链目录
+- Linux CI 更适合直接跑 CMake
+
+### 3. Release 触发方式
+
+`release.yml` 会在下列场景触发：
+
+- 推送形如 `v0.2.0` 的 tag
+- 手动触发并显式指定版本号
+
+这套流程面向的是可以被别人下载、检查和刷写的开源发布包，不是工厂 SKU 流程。
+
+### 4. 发布包类型
+
+当前的发布包系列包括：
+
+- `generic-debug`
+- `generic-hardened`
+- `generic-hardened-secure-boot-ready`
+- `preset-<label>-debug`
+- `preset-<label>-hardened`
+- `preset-<label>-hardened-secure-boot-ready`
+- `probe-board-id`
+
+其中 secure-boot-ready 变体只有在 workflow 运行于 GitHub Actions Environment `release`，并且该环境能够读取签名密钥 secret 时才会生成。
+
+当前 GitHub Actions release workflow 期望配置在环境里的 secret 名称是：
+
+- `MEOWKEY_SECUREBOOT_PEM_B64`
+
+它的值需要是 PEM 签名私钥内容的 base64 编码。workflow 会先把它解码到 `${{ github.workspace }}/.cache/meowkey-secureboot.pem`，然后才会启用 secure-boot-ready 这一组发布包。如果你希望 release 环境的审批或访问控制真正生效，就不应把它继续保留为仓库级 secret。
+
+### 5. 发布包内容
+
+普通固件压缩包内包含：
+
+- `meowkey.uf2`
+- `meowkey.bin`
+- `meowkey.hex`
+- `meowkey.elf`
+- `meowkey.elf.map`
+- `meowkey_build_config.h`
+- `manifest.json`
+- `flash.ps1`
+- `flash.sh`
+
+secure-boot-ready 压缩包会额外包含：
+
+- `meowkey.otp.json`
+
+probe 压缩包包含：
+
+- `meowkey_probe.uf2`
+- `meowkey_probe.bin`
+- `meowkey_probe.hex`
+- `meowkey_probe.elf`
+- `meowkey_probe.elf.map`
+- `manifest.json`
+- `flash.ps1`
+- `flash.sh`
+
+统一校验清单放在：
+
+- `SHA256SUMS.txt`
+
+### 6. 版本约定
+
+推荐标签形式：
+
+- `v0.1.0`
+- `v0.2.0`
+- `v0.2.1`
+- `v0.2.0-beta.2`
+
+workflow 会据此派生：
+
+- `MEOWKEY_VERSION_MAJOR`
+- `MEOWKEY_VERSION_MINOR`
+- `MEOWKEY_VERSION_PATCH`
+- 可选的 `MEOWKEY_VERSION_LABEL`
+
+如果启用了 anti-rollback，默认使用的紧凑版本编码为 `major * 64 + minor * 8 + patch`，因此 `minor` 和 `patch` 需要保持在 `0..7` 范围内。
+
+### 7. 本地发布前检查
+
+Windows：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\check.ps1
+```
+
+CI 风格 CMake：
+
+```bash
+cmake -S . -B build-ci -G Ninja -DPICO_BOARD=meowkey_rp2350_usb -DPICO_NO_PICOTOOL=ON
+cmake --build build-ci
+cmake -S . -B build-ci-hardened -G Ninja -DPICO_BOARD=meowkey_rp2350_usb -DPICO_NO_PICOTOOL=ON -DMEOWKEY_ENABLE_DEBUG_HID=OFF
+cmake --build build-ci-hardened
+cmake --build build-ci --target meowkey_probe
+```
+
+### 8. 发布边界
+
+自动化 release 不能证明：
+
+- 已经通过 FIDO 一致性测试
+- 各个底板在真实硬件上都行为正确
+- 目标设备已经真正烧录 OTP
+- 已经具备工厂级升级和恢复流程
+
+它只能证明：当前定义的发布包集合能够被一致地构建和组织出来。

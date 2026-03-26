@@ -11,6 +11,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-24.04
+    environment:
+      name: release
     env:
       PICOTOOL_FETCH_DIR: ${{ github.workspace }}/.cache/picotool-release
       PICO_SDK_CI_PATH: ${{ github.workspace }}/.cache/pico-sdk-release

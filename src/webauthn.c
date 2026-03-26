@@ -128,6 +128,13 @@ static int webauthn_random(void *context, unsigned char *output, size_t output_l
     return 0;
 }
 
+static void secure_zero(void *buffer, size_t length) {
+    volatile uint8_t *bytes = (volatile uint8_t *)buffer;
+    while (length-- > 0u) {
+        *bytes++ = 0u;
+    }
+}
+
 static void clear_pending_assertion(void) {
     memset(&s_pending_assertion, 0, sizeof(s_pending_assertion));
 }
@@ -1013,11 +1020,12 @@ static bool build_attested_auth_data(const meowkey_credential_record_t *record,
     size_t cose_key_length = sizeof(cose_key);
     uint8_t flags = 0x41u;
     size_t offset = 0u;
+    bool ok = false;
 
     if (!sha256_bytes((const uint8_t *)record->rp_id, record->rp_id_length, rp_id_hash) ||
         !build_cose_public_key(public_key, cose_key, &cose_key_length) ||
         *output_length < (32u + 1u + 4u + 16u + 2u + record->credential_id_length + cose_key_length + extensions_length)) {
-        return false;
+        goto cleanup;
     }
 
     if (user_verified) {
@@ -1048,7 +1056,12 @@ static bool build_attested_auth_data(const meowkey_credential_record_t *record,
     }
 
     *output_length = offset;
-    return true;
+    ok = true;
+
+cleanup:
+    secure_zero(rp_id_hash, sizeof(rp_id_hash));
+    secure_zero(cose_key, sizeof(cose_key));
+    return ok;
 }
 
 static uint8_t generate_credential(meowkey_credential_record_t *record, uint8_t public_key[65]) {
@@ -1100,11 +1113,12 @@ static uint8_t build_make_credential_response(const meowkey_credential_record_t 
                                               const uint8_t public_key[65],
                                               uint8_t *response,
                                               size_t *response_length) {
-    uint8_t auth_data[256];
-    uint8_t extensions[32];
+    uint8_t auth_data[256] = {0};
+    uint8_t extensions[32] = {0};
     size_t extensions_length = sizeof(extensions);
     size_t auth_data_length = sizeof(auth_data);
     meowkey_cbor_writer_t writer;
+    uint8_t status = CTAP2_ERR_INVALID_CBOR;
 
     if (!build_hmac_secret_create_extensions(request, extensions, &extensions_length) ||
         !build_attested_auth_data(record,
@@ -1114,7 +1128,7 @@ static uint8_t build_make_credential_response(const meowkey_credential_record_t 
                                   request->user_verified,
                                   auth_data,
                                   &auth_data_length)) {
-        return CTAP2_ERR_INVALID_CBOR;
+        goto cleanup;
     }
 
     meowkey_cbor_writer_init(&writer, response, *response_length);
@@ -1127,11 +1141,16 @@ static uint8_t build_make_credential_response(const meowkey_credential_record_t 
     meowkey_cbor_write_map_start(&writer, 0u);
 
     if (writer.failed) {
-        return CTAP2_ERR_INVALID_CBOR;
+        goto cleanup;
     }
 
     *response_length = writer.length;
-    return CTAP2_STATUS_OK;
+    status = CTAP2_STATUS_OK;
+
+cleanup:
+    secure_zero(auth_data, sizeof(auth_data));
+    secure_zero(extensions, sizeof(extensions));
+    return status;
 }
 
 static uint8_t build_hmac_secret_assertion_extensions(const meowkey_credential_record_t *record,
@@ -1139,12 +1158,13 @@ static uint8_t build_hmac_secret_assertion_extensions(const meowkey_credential_r
                                                       uint8_t *output,
                                                       size_t *output_length) {
     const uint8_t *cred_random = NULL;
-    uint8_t shared_secret[MEOWKEY_SHARED_SECRET_SIZE];
-    uint8_t decrypted_salts[64];
-    uint8_t secrets[64];
+    uint8_t shared_secret[MEOWKEY_SHARED_SECRET_SIZE] = {0};
+    uint8_t decrypted_salts[64] = {0};
+    uint8_t secrets[64] = {0};
     size_t secret_length = 0u;
     meowkey_cbor_writer_t writer;
     uint8_t protocol;
+    uint8_t status = CTAP2_STATUS_OK;
 
     if (!request->hmac_secret_requested || !record->cred_random_ready) {
         *output_length = 0u;
@@ -1153,14 +1173,17 @@ static uint8_t build_hmac_secret_assertion_extensions(const meowkey_credential_r
 
     protocol = request->hmac_secret_have_protocol ? request->hmac_secret_protocol : MEOWKEY_PIN_UV_AUTH_PROTOCOL_1;
     if (protocol != MEOWKEY_PIN_UV_AUTH_PROTOCOL_1) {
-        return CTAP1_ERR_INVALID_PARAMETER;
+        status = CTAP1_ERR_INVALID_PARAMETER;
+        goto cleanup;
     }
     if ((request->hmac_secret_salt_enc_length != 32u && request->hmac_secret_salt_enc_length != 64u) ||
         (request->hmac_secret_salt_enc_length % 16u) != 0u) {
-        return CTAP1_ERR_INVALID_PARAMETER;
+        status = CTAP1_ERR_INVALID_PARAMETER;
+        goto cleanup;
     }
     if (!meowkey_client_pin_get_shared_secret(request->hmac_secret_key_agreement, shared_secret)) {
-        return CTAP1_ERR_INVALID_PARAMETER;
+        status = CTAP1_ERR_INVALID_PARAMETER;
+        goto cleanup;
     }
     {
         uint8_t auth_status = meowkey_client_pin_verify_shared_secret_auth(shared_secret,
@@ -1169,19 +1192,22 @@ static uint8_t build_hmac_secret_assertion_extensions(const meowkey_credential_r
                                                                            request->hmac_secret_salt_auth,
                                                                            request->hmac_secret_salt_auth_length);
         if (auth_status != CTAP2_STATUS_OK) {
-            return auth_status;
+            status = auth_status;
+            goto cleanup;
         }
     }
     if (!meowkey_client_pin_decrypt_with_shared_secret(shared_secret,
                                                        request->hmac_secret_salt_enc,
                                                        request->hmac_secret_salt_enc_length,
                                                        decrypted_salts)) {
-        return CTAP1_ERR_INVALID_PARAMETER;
+        status = CTAP1_ERR_INVALID_PARAMETER;
+        goto cleanup;
     }
 
     cred_random = request->user_verified ? record->cred_random_with_uv : record->cred_random_without_uv;
     if (!hmac_sha256(cred_random, MEOWKEY_CRED_RANDOM_SIZE, decrypted_salts, 32u, secrets)) {
-        return CTAP2_ERR_INVALID_CBOR;
+        status = CTAP2_ERR_INVALID_CBOR;
+        goto cleanup;
     }
     secret_length = 32u;
     if (request->hmac_secret_salt_enc_length == 64u) {
@@ -1190,12 +1216,14 @@ static uint8_t build_hmac_secret_assertion_extensions(const meowkey_credential_r
                          &decrypted_salts[32],
                          32u,
                          &secrets[32])) {
-            return CTAP2_ERR_INVALID_CBOR;
+            status = CTAP2_ERR_INVALID_CBOR;
+            goto cleanup;
         }
         secret_length = 64u;
     }
     if (!meowkey_client_pin_encrypt_with_shared_secret(shared_secret, secrets, secret_length, secrets)) {
-        return CTAP1_ERR_INVALID_PARAMETER;
+        status = CTAP1_ERR_INVALID_PARAMETER;
+        goto cleanup;
     }
 
     meowkey_cbor_writer_init(&writer, output, *output_length);
@@ -1203,11 +1231,18 @@ static uint8_t build_hmac_secret_assertion_extensions(const meowkey_credential_r
     meowkey_cbor_write_text(&writer, "hmac-secret", 11u);
     meowkey_cbor_write_bytes(&writer, secrets, secret_length);
     if (writer.failed) {
-        return CTAP2_ERR_INVALID_CBOR;
+        status = CTAP2_ERR_INVALID_CBOR;
+        goto cleanup;
     }
 
     *output_length = writer.length;
-    return CTAP2_STATUS_OK;
+    status = CTAP2_STATUS_OK;
+
+cleanup:
+    secure_zero(shared_secret, sizeof(shared_secret));
+    secure_zero(decrypted_salts, sizeof(decrypted_salts));
+    secure_zero(secrets, sizeof(secrets));
+    return status;
 }
 
 static bool build_assertion_auth_data(const char *rp_id,
@@ -1252,21 +1287,24 @@ static uint8_t sign_assertion(const meowkey_credential_record_t *record,
                               const uint8_t client_data_hash[32],
                               uint8_t *signature,
                               size_t *signature_length) {
-    uint8_t message[192];
-    uint8_t message_hash[32];
+    uint8_t message[192] = {0};
+    uint8_t message_hash[32] = {0};
     mbedtls_ecdsa_context context;
     int result;
+    uint8_t status = CTAP2_ERR_INVALID_CREDENTIAL;
 
+    mbedtls_ecdsa_init(&context);
     if ((auth_data_length + 32u) > sizeof(message)) {
-        return CTAP2_ERR_INVALID_CBOR;
+        status = CTAP2_ERR_INVALID_CBOR;
+        goto cleanup;
     }
     memcpy(message, auth_data, auth_data_length);
     memcpy(&message[auth_data_length], client_data_hash, 32u);
     if (!sha256_bytes(message, auth_data_length + 32u, message_hash)) {
-        return CTAP2_ERR_INVALID_CBOR;
+        status = CTAP2_ERR_INVALID_CBOR;
+        goto cleanup;
     }
 
-    mbedtls_ecdsa_init(&context);
     result = mbedtls_ecp_group_load(&context.MBEDTLS_PRIVATE(grp), MBEDTLS_ECP_DP_SECP256R1);
     if (result == 0) {
         result = mbedtls_mpi_read_binary(
@@ -1296,8 +1334,12 @@ static uint8_t sign_assertion(const meowkey_credential_record_t *record,
             NULL);
     }
 
+    status = result == 0 ? CTAP2_STATUS_OK : CTAP2_ERR_INVALID_CREDENTIAL;
+cleanup:
     mbedtls_ecdsa_free(&context);
-    return result == 0 ? CTAP2_STATUS_OK : CTAP2_ERR_INVALID_CREDENTIAL;
+    secure_zero(message, sizeof(message));
+    secure_zero(message_hash, sizeof(message_hash));
+    return status;
 }
 
 static uint8_t build_get_assertion_response(const meowkey_credential_record_t *record,
@@ -1393,23 +1435,25 @@ static uint8_t respond_with_assertion(const get_assertion_request_t *request,
                                       uint8_t *response,
                                       size_t *response_length) {
     meowkey_credential_record_t record;
-    uint8_t auth_data[160];
-    uint8_t extensions[128];
+    uint8_t auth_data[160] = {0};
+    uint8_t extensions[128] = {0};
     size_t extensions_length = sizeof(extensions);
     size_t auth_data_length = sizeof(auth_data);
-    uint8_t signature[MBEDTLS_ECDSA_MAX_LEN];
+    uint8_t signature[MBEDTLS_ECDSA_MAX_LEN] = {0};
     size_t signature_length = sizeof(signature);
-    uint8_t status;
+    uint8_t status = CTAP2_ERR_INVALID_CREDENTIAL;
+
+    memset(&record, 0, sizeof(record));
 
     if (!meowkey_store_get_credential_by_slot(slot_index, &record)) {
-        return CTAP2_ERR_INVALID_CREDENTIAL;
+        goto cleanup;
     }
 
     record.sign_count += 1u;
     status = build_hmac_secret_assertion_extensions(&record, request, extensions, &extensions_length);
     if (status != CTAP2_STATUS_OK) {
         meowkey_diag_logf("getAssertion hmac-secret failed status=0x%02x", status);
-        return status;
+        goto cleanup;
     }
     if (!build_assertion_auth_data(record.rp_id,
                                    record.rp_id_length,
@@ -1420,18 +1464,20 @@ static uint8_t respond_with_assertion(const get_assertion_request_t *request,
                                    auth_data,
                                    &auth_data_length)) {
         meowkey_diag_logf("getAssertion authData build failed");
-        return CTAP2_ERR_INVALID_CBOR;
+        status = CTAP2_ERR_INVALID_CBOR;
+        goto cleanup;
     }
 
     status = sign_assertion(&record, auth_data, auth_data_length, request->client_data_hash, signature, &signature_length);
     if (status != CTAP2_STATUS_OK) {
         meowkey_diag_logf("getAssertion signing failed status=0x%02x", status);
-        return status;
+        goto cleanup;
     }
 
     if (!meowkey_store_update_sign_count(slot_index, record.sign_count)) {
         meowkey_diag_logf("getAssertion signCount update failed");
-        return CTAP2_ERR_INVALID_CREDENTIAL;
+        status = CTAP2_ERR_INVALID_CREDENTIAL;
+        goto cleanup;
     }
 
     meowkey_diag_logf("getAssertion success rp=%s signCount=%lu slot=%lu",
@@ -1439,15 +1485,22 @@ static uint8_t respond_with_assertion(const get_assertion_request_t *request,
                       (unsigned long)record.sign_count,
                       (unsigned long)slot_index);
 
-    return build_get_assertion_response(&record,
-                                        auth_data,
-                                        auth_data_length,
-                                        signature,
-                                        signature_length,
-                                        include_number_of_credentials,
-                                        number_of_credentials,
-                                        response,
-                                        response_length);
+    status = build_get_assertion_response(&record,
+                                          auth_data,
+                                          auth_data_length,
+                                          signature,
+                                          signature_length,
+                                          include_number_of_credentials,
+                                          number_of_credentials,
+                                          response,
+                                          response_length);
+
+cleanup:
+    secure_zero(&record, sizeof(record));
+    secure_zero(auth_data, sizeof(auth_data));
+    secure_zero(extensions, sizeof(extensions));
+    secure_zero(signature, sizeof(signature));
+    return status;
 }
 
 uint8_t meowkey_webauthn_make_credential(const uint8_t *request,
@@ -1456,24 +1509,26 @@ uint8_t meowkey_webauthn_make_credential(const uint8_t *request,
                                          size_t *response_length) {
     make_credential_request_t parsed;
     meowkey_credential_record_t record;
-    uint8_t public_key[65];
-    uint8_t status;
+    uint8_t public_key[65] = {0};
+    uint8_t status = CTAP2_ERR_INVALID_CBOR;
+
+    memset(&parsed, 0, sizeof(parsed));
+    memset(&record, 0, sizeof(record));
 
     meowkey_store_init();
     status = parse_make_credential_request(request, request_length, &parsed);
     if (status != CTAP2_STATUS_OK) {
         meowkey_diag_logf("makeCredential rejected status=0x%02x", status);
-        return status;
+        goto cleanup;
     }
     clear_pending_assertion();
     clear_recent_assertion_up();
     status = meowkey_user_presence_wait_for_confirmation("makeCredential");
     if (status != CTAP2_STATUS_OK) {
         meowkey_diag_logf("makeCredential userPresence status=0x%02x", status);
-        return status;
+        goto cleanup;
     }
 
-    memset(&record, 0, sizeof(record));
     memcpy(record.rp_id, parsed.rp_id, parsed.rp_id_length + 1u);
     memcpy(record.user_id, parsed.user_id, parsed.user_id_length);
     memcpy(record.user_name, parsed.user_name, parsed.user_name_length + (parsed.user_name_length > 0u ? 1u : 0u));
@@ -1486,12 +1541,13 @@ uint8_t meowkey_webauthn_make_credential(const uint8_t *request,
     status = generate_credential(&record, public_key);
     if (status != CTAP2_STATUS_OK) {
         meowkey_diag_logf("makeCredential key generation failed status=0x%02x", status);
-        return status;
+        goto cleanup;
     }
 
     if (!meowkey_store_add_credential(&record, NULL)) {
         meowkey_diag_logf("makeCredential store full");
-        return CTAP2_ERR_KEY_STORE_FULL;
+        status = CTAP2_ERR_KEY_STORE_FULL;
+        goto cleanup;
     }
 
     meowkey_diag_logf(
@@ -1500,7 +1556,13 @@ uint8_t meowkey_webauthn_make_credential(const uint8_t *request,
         record.user_name_length > 0u ? record.user_name : "(anonymous)",
         (unsigned long)record.credential_id_length);
 
-    return build_make_credential_response(&record, &parsed, public_key, response, response_length);
+    status = build_make_credential_response(&record, &parsed, public_key, response, response_length);
+
+cleanup:
+    secure_zero(&parsed, sizeof(parsed));
+    secure_zero(&record, sizeof(record));
+    secure_zero(public_key, sizeof(public_key));
+    return status;
 }
 
 uint8_t meowkey_webauthn_get_assertion(const uint8_t *request,
