@@ -40,6 +40,11 @@ param(
     [int]$VersionMinor = 1,
     [int]$VersionPatch = 0,
     [string]$VersionLabel = "dev",
+    [switch]$EnableSignedBoot,
+    [switch]$EnableAntiRollback,
+    [string]$SecureBootSigningKey = "",
+    [string]$SecureBootOtpOutputPath = "",
+    [string]$AntiRollbackRows = "0xc0;0xc3;0xc6;0xc9;0xcc;0xcf;0xd2;0xd5;0xd8;0xdb;0xde;0xe1",
     [string]$PicotoolFetchPath = "",
     [switch]$NoPicotool,
     [switch]$IgnoreGitGlobalConfig,
@@ -121,6 +126,27 @@ if ($VersionMajor -lt 0 -or $VersionMinor -lt 0 -or $VersionPatch -lt 0) {
     throw "VersionMajor, VersionMinor, and VersionPatch must be 0 or greater"
 }
 
+if ($EnableAntiRollback -and -not $EnableSignedBoot) {
+    throw "EnableAntiRollback requires EnableSignedBoot."
+}
+
+if ($EnableAntiRollback -and ($VersionMinor -gt 7 -or $VersionPatch -gt 7)) {
+    throw "The compact anti-rollback encoding requires VersionMinor and VersionPatch to be <= 7."
+}
+
+if ($EnableAntiRollback) {
+    $rollbackRows = @($AntiRollbackRows.Split(';', [System.StringSplitOptions]::RemoveEmptyEntries))
+    if ($rollbackRows.Count -lt 1) {
+        throw "AntiRollbackRows must contain at least one OTP row when EnableAntiRollback is used."
+    }
+
+    $rollbackVersion = ($VersionMajor * 64) + ($VersionMinor * 8) + $VersionPatch
+    $rollbackCapacity = $rollbackRows.Count * 24
+    if ($rollbackVersion -gt $rollbackCapacity) {
+        throw "Rollback version $rollbackVersion exceeds the configured AntiRollbackRows capacity ($($rollbackRows.Count) rows => $rollbackCapacity)."
+    }
+}
+
 if ($UserPresenceTapCount -lt 1 -or $UserPresenceTapCount -gt 4) {
     throw "UserPresenceTapCount must be between 1 and 4"
 }
@@ -192,6 +218,10 @@ if (-not $NoPicotool -and -not $PicotoolFetchPath) {
     $PicotoolFetchPath = Join-Path $projectRoot ".cache\\picotool"
 }
 
+if (($EnableSignedBoot -or $EnableAntiRollback) -and $NoPicotool) {
+    throw "EnableSignedBoot and EnableAntiRollback require picotool. Remove -NoPicotool."
+}
+
 if ($Clean -and (Test-Path $buildPath)) {
     Remove-Item -Recurse -Force $buildPath
 }
@@ -228,6 +258,14 @@ if ($IgnoreGitGlobalConfig) {
 
 if (-not $LogPath) {
     $LogPath = Join-Path $buildPath "build.log"
+}
+
+if (-not $SecureBootSigningKey) {
+    $SecureBootSigningKey = Join-Path $projectRoot "keys\\meowkey-secureboot.pem"
+}
+
+if ($EnableSignedBoot -and -not (Test-Path $SecureBootSigningKey)) {
+    throw "SecureBootSigningKey was not found: $SecureBootSigningKey"
 }
 
 New-Item -ItemType Directory -Force -Path $buildPath | Out-Null
@@ -311,6 +349,24 @@ $cmakeArgs = @(
     "-DMEOWKEY_VERSION_PATCH=$VersionPatch",
     "-DMEOWKEY_VERSION_LABEL=$VersionLabel"
 )
+
+if ($EnableSignedBoot) {
+    $cmakeArgs += @(
+        "-DMEOWKEY_ENABLE_SIGNED_BOOT=ON",
+        "-DMEOWKEY_SIGNING_KEY=$SecureBootSigningKey"
+    )
+}
+
+if ($EnableAntiRollback) {
+    $cmakeArgs += @(
+        "-DMEOWKEY_ENABLE_ANTI_ROLLBACK=ON",
+        "-DMEOWKEY_ANTI_ROLLBACK_ROWS=$AntiRollbackRows"
+    )
+}
+
+if ($SecureBootOtpOutputPath) {
+    $cmakeArgs += "-DMEOWKEY_SECURE_BOOT_OTP_OUTPUT=$SecureBootOtpOutputPath"
+}
 
 if (-not $NoPicotool -and $PicotoolFetchPath) {
     $cmakeArgs += "-DPICOTOOL_FETCH_FROM_GIT_PATH=$PicotoolFetchPath"

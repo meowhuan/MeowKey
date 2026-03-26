@@ -9,11 +9,24 @@
 #include "hardware/flash.h"
 #include "hardware/regs/addressmap.h"
 #include "hardware/sync.h"
+#include "mbedtls/aes.h"
+#include "mbedtls/md.h"
 #include "meowkey_build_config.h"
+#include "pico/rand.h"
+#include "pico/unique_id.h"
 
 enum {
     MEOWKEY_STORE_MAGIC = 0x4d4b5331u,
     MEOWKEY_STORE_VERSION = 6u,
+    MEOWKEY_STORE_WRAP_MAGIC = 0x4d4b5731u,
+    MEOWKEY_STORE_WRAP_FLAG_PAYLOAD_ENCRYPTED = 0x01u,
+    MEOWKEY_STORE_WRAP_SALT_SIZE = 16u,
+    MEOWKEY_STORE_WRAP_TAG_SIZE = 16u,
+    MEOWKEY_STORE_WRAP_AES_KEY_SIZE = 32u,
+    MEOWKEY_STORE_WRAP_AES_NONCE_SIZE = 16u,
+    MEOWKEY_STORE_UP_PROVENANCE_MAGIC = 0xa5u,
+    MEOWKEY_STORE_UP_PROVENANCE_FLAG_VALID = 0x80u,
+    MEOWKEY_STORE_UP_PROVENANCE_FLAG_DEBUG_HID = 0x01u,
     MEOWKEY_STORE_TOTAL_SIZE = FLASH_SECTOR_SIZE * MEOWKEY_CREDENTIAL_STORE_SECTORS,
     MEOWKEY_STORE_SIGN_COUNT_JOURNAL_SECTORS = 2u,
     MEOWKEY_STORE_SIGN_COUNT_JOURNAL_SIZE = FLASH_SECTOR_SIZE * MEOWKEY_STORE_SIGN_COUNT_JOURNAL_SECTORS,
@@ -89,7 +102,8 @@ typedef struct {
     uint32_t credential_count;
     uint8_t pin_configured;
     uint8_t pin_retries;
-    uint8_t reserved0[2];
+    uint8_t user_presence_provenance_magic;
+    uint8_t user_presence_provenance_flags;
     uint8_t pin_hash[16];
     meowkey_user_presence_config_t user_presence;
 } meowkey_store_payload_fixed_t;
@@ -123,6 +137,14 @@ typedef struct {
     uint32_t header_crc32;
     uint8_t reserved[MEOWKEY_STORE_HEADER_SIZE - 24u];
 } meowkey_store_header_t;
+
+typedef struct {
+    uint32_t magic;
+    uint8_t salt[MEOWKEY_STORE_WRAP_SALT_SIZE];
+    uint8_t tag[MEOWKEY_STORE_WRAP_TAG_SIZE];
+    uint8_t flags;
+    uint8_t reserved[3];
+} meowkey_store_wrap_metadata_t;
 
 typedef union {
     meowkey_store_payload_t data;
@@ -250,6 +272,7 @@ _Static_assert(MEOWKEY_STORE_DATA_SIZE >= (FLASH_SECTOR_SIZE * 2u), "credential 
 _Static_assert(sizeof(meowkey_user_presence_config_t) == 8u, "user-presence config must stay compact");
 _Static_assert(sizeof(meowkey_store_payload_fixed_t) == 32u, "store fixed payload must stay stable");
 _Static_assert(sizeof(meowkey_store_header_t) == MEOWKEY_STORE_HEADER_SIZE, "store header size must stay page-friendly");
+_Static_assert(sizeof(meowkey_store_wrap_metadata_t) == (MEOWKEY_STORE_HEADER_SIZE - 24u), "wrap metadata must fill the store header reserve");
 _Static_assert(sizeof(meowkey_store_payload_image_t) == MEOWKEY_STORE_SLOT_PAYLOAD_SIZE, "payload image must fill a slot payload");
 _Static_assert(sizeof(meowkey_store_slot_image_t) == MEOWKEY_STORE_SLOT_SIZE, "slot image must fill a slot");
 _Static_assert(sizeof(meowkey_store_image_v1_t) <= MEOWKEY_STORE_LEGACY_SIZE, "legacy v1 image exceeds legacy flash region");
@@ -268,6 +291,8 @@ static uint32_t s_store_generation = 0u;
 static uint32_t s_store_payload_crc32 = 0u;
 static int s_active_slot_index = -1;
 static meowkey_sign_count_journal_state_t s_sign_count_journal;
+static pico_unique_board_id_t s_store_unique_board_id;
+static bool s_store_unique_board_id_ready = false;
 
 static uint32_t crc32_bytes(const uint8_t *data, size_t length) {
     uint32_t crc = 0xffffffffu;
@@ -283,6 +308,155 @@ static uint32_t crc32_bytes(const uint8_t *data, size_t length) {
     }
 
     return ~crc;
+}
+
+static void store_secure_zero(void *buffer, size_t length) {
+    volatile uint8_t *bytes = (volatile uint8_t *)buffer;
+    while (length-- > 0u) {
+        *bytes++ = 0u;
+    }
+}
+
+static bool store_constant_time_equal(const uint8_t *left, const uint8_t *right, size_t length) {
+    uint8_t diff = 0u;
+    size_t index;
+
+    for (index = 0u; index < length; ++index) {
+        diff |= (uint8_t)(left[index] ^ right[index]);
+    }
+
+    return diff == 0u;
+}
+
+static const uint8_t *store_unique_board_id_bytes(size_t *length) {
+    if (!s_store_unique_board_id_ready) {
+        pico_get_unique_board_id(&s_store_unique_board_id);
+        s_store_unique_board_id_ready = true;
+    }
+
+    if (length != NULL) {
+        *length = sizeof(s_store_unique_board_id.id);
+    }
+    return s_store_unique_board_id.id;
+}
+
+static bool store_hmac_sha256(const uint8_t *key,
+                              size_t key_length,
+                              const uint8_t *data,
+                              size_t data_length,
+                              uint8_t output[32]) {
+    const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    if (info == NULL) {
+        return false;
+    }
+
+    return mbedtls_md_hmac(info, key, key_length, data, data_length, output) == 0;
+}
+
+static void store_random_bytes(uint8_t *output, size_t length) {
+    while (length > 0u) {
+        uint32_t value = get_rand_32();
+        size_t chunk_length = length < sizeof(value) ? length : sizeof(value);
+        memcpy(output, &value, chunk_length);
+        output += chunk_length;
+        length -= chunk_length;
+    }
+}
+
+static bool store_derive_wrap_material(const uint8_t salt[MEOWKEY_STORE_WRAP_SALT_SIZE],
+                                       const char *label,
+                                       uint8_t *output,
+                                       size_t output_length) {
+    const uint8_t *unique_id;
+    size_t unique_id_length = 0u;
+    uint8_t buffer[64];
+    size_t label_length;
+
+    if (label == NULL || output == NULL || output_length > 32u) {
+        return false;
+    }
+
+    unique_id = store_unique_board_id_bytes(&unique_id_length);
+    label_length = strlen(label);
+    if ((label_length + MEOWKEY_STORE_WRAP_SALT_SIZE) > sizeof(buffer)) {
+        return false;
+    }
+
+    memcpy(buffer, label, label_length);
+    memcpy(&buffer[label_length], salt, MEOWKEY_STORE_WRAP_SALT_SIZE);
+    return store_hmac_sha256(unique_id, unique_id_length, buffer, label_length + MEOWKEY_STORE_WRAP_SALT_SIZE, output);
+}
+
+static bool store_payload_crypt_in_place(const meowkey_store_wrap_metadata_t *metadata, uint8_t *payload, size_t length) {
+    mbedtls_aes_context aes;
+    uint8_t key[MEOWKEY_STORE_WRAP_AES_KEY_SIZE];
+    uint8_t nonce[MEOWKEY_STORE_WRAP_AES_NONCE_SIZE];
+    uint8_t stream_block[16] = {0};
+    size_t offset = 0u;
+    int result = -1;
+
+    if (metadata == NULL || payload == NULL) {
+        return false;
+    }
+    if (!store_derive_wrap_material(metadata->salt, "meowkey-store-wrap/aes-key", key, sizeof(key)) ||
+        !store_derive_wrap_material(metadata->salt, "meowkey-store-wrap/aes-ctr", nonce, sizeof(nonce))) {
+        store_secure_zero(key, sizeof(key));
+        store_secure_zero(nonce, sizeof(nonce));
+        return false;
+    }
+
+    mbedtls_aes_init(&aes);
+    result = mbedtls_aes_setkey_enc(&aes, key, 256);
+    if (result == 0) {
+        result = mbedtls_aes_crypt_ctr(&aes,
+                                       length,
+                                       &offset,
+                                       nonce,
+                                       stream_block,
+                                       payload,
+                                       payload);
+    }
+    mbedtls_aes_free(&aes);
+    store_secure_zero(key, sizeof(key));
+    store_secure_zero(nonce, sizeof(nonce));
+    store_secure_zero(stream_block, sizeof(stream_block));
+    return result == 0;
+}
+
+static bool store_compute_wrap_tag(const meowkey_store_wrap_metadata_t *metadata,
+                                   const uint8_t *payload,
+                                   size_t payload_length,
+                                   uint8_t tag[MEOWKEY_STORE_WRAP_TAG_SIZE]) {
+    uint8_t full_tag[32];
+    uint8_t mac_key[32];
+    bool ok;
+
+    if (metadata == NULL || payload == NULL || tag == NULL) {
+        return false;
+    }
+
+    ok = store_derive_wrap_material(metadata->salt, "meowkey-store-wrap/mac-key", mac_key, sizeof(mac_key)) &&
+         store_hmac_sha256(mac_key, sizeof(mac_key), payload, payload_length, full_tag);
+    if (ok) {
+        memcpy(tag, full_tag, MEOWKEY_STORE_WRAP_TAG_SIZE);
+    }
+
+    store_secure_zero(full_tag, sizeof(full_tag));
+    store_secure_zero(mac_key, sizeof(mac_key));
+    return ok;
+}
+
+static bool store_wrap_metadata_is_valid(const meowkey_store_wrap_metadata_t *metadata) {
+    return metadata != NULL &&
+           metadata->magic == MEOWKEY_STORE_WRAP_MAGIC &&
+           metadata->flags == MEOWKEY_STORE_WRAP_FLAG_PAYLOAD_ENCRYPTED;
+}
+
+static void store_init_wrap_metadata(meowkey_store_wrap_metadata_t *metadata) {
+    memset(metadata, 0, sizeof(*metadata));
+    metadata->magic = MEOWKEY_STORE_WRAP_MAGIC;
+    metadata->flags = MEOWKEY_STORE_WRAP_FLAG_PAYLOAD_ENCRYPTED;
+    store_random_bytes(metadata->salt, sizeof(metadata->salt));
 }
 
 static uint32_t store_header_crc(const meowkey_store_header_t *header) {
@@ -310,6 +484,44 @@ static void store_default_user_presence_config(meowkey_user_presence_config_t *c
     config->request_timeout_ms = (uint16_t)MEOWKEY_DEFAULT_UP_REQUEST_TIMEOUT_MS;
 }
 
+static uint8_t store_current_user_presence_provenance_flags(void) {
+    uint8_t flags = MEOWKEY_STORE_UP_PROVENANCE_FLAG_VALID;
+
+#if MEOWKEY_ENABLE_DEBUG_HID
+    flags |= MEOWKEY_STORE_UP_PROVENANCE_FLAG_DEBUG_HID;
+#endif
+
+    return flags;
+}
+
+static void store_mark_user_presence_provenance(meowkey_store_payload_fixed_t *fixed) {
+    if (fixed == NULL) {
+        return;
+    }
+
+    fixed->user_presence_provenance_magic = MEOWKEY_STORE_UP_PROVENANCE_MAGIC;
+    fixed->user_presence_provenance_flags = store_current_user_presence_provenance_flags();
+}
+
+static bool store_user_presence_provenance_is_known(const meowkey_store_payload_fixed_t *fixed) {
+    return fixed != NULL &&
+           fixed->user_presence_provenance_magic == MEOWKEY_STORE_UP_PROVENANCE_MAGIC &&
+           (fixed->user_presence_provenance_flags & MEOWKEY_STORE_UP_PROVENANCE_FLAG_VALID) != 0u;
+}
+
+static bool store_user_presence_config_is_trusted(const meowkey_store_payload_fixed_t *fixed) {
+#if MEOWKEY_ENABLE_DEBUG_HID
+    (void)fixed;
+    return true;
+#else
+    if (!store_user_presence_provenance_is_known(fixed)) {
+        return false;
+    }
+
+    return (fixed->user_presence_provenance_flags & MEOWKEY_STORE_UP_PROVENANCE_FLAG_DEBUG_HID) == 0u;
+#endif
+}
+
 static bool store_user_presence_config_is_valid(const meowkey_user_presence_config_t *config) {
     if (config == NULL) {
         return false;
@@ -334,13 +546,21 @@ static bool store_user_presence_config_is_valid(const meowkey_user_presence_conf
 
 static bool store_sanitize_user_presence_config(void) {
     meowkey_user_presence_config_t defaults;
-    if (store_user_presence_config_is_valid(&s_store.data.fixed.user_presence)) {
-        return false;
+    if (!store_user_presence_config_is_valid(&s_store.data.fixed.user_presence)) {
+        store_default_user_presence_config(&defaults);
+        s_store.data.fixed.user_presence = defaults;
+        store_mark_user_presence_provenance(&s_store.data.fixed);
+        return true;
     }
 
-    store_default_user_presence_config(&defaults);
-    s_store.data.fixed.user_presence = defaults;
-    return true;
+    if (!store_user_presence_config_is_trusted(&s_store.data.fixed)) {
+        store_default_user_presence_config(&defaults);
+        s_store.data.fixed.user_presence = defaults;
+        store_mark_user_presence_provenance(&s_store.data.fixed);
+        return true;
+    }
+
+    return false;
 }
 
 static bool store_slot_is_valid(const meowkey_store_slot_t *slot) {
@@ -402,6 +622,7 @@ static void store_reset_image(void) {
     s_store.data.fixed.credential_count = 0u;
     s_store.data.fixed.pin_retries = MEOWKEY_PIN_RETRIES_DEFAULT;
     s_store.data.fixed.user_presence = defaults;
+    store_mark_user_presence_provenance(&s_store.data.fixed);
     s_store_generation = 0u;
     s_store_payload_crc32 = crc32_bytes(s_store.raw, sizeof(s_store.raw));
     s_active_slot_index = -1;
@@ -485,7 +706,9 @@ static void store_copy_v2_slot_to_slot(const meowkey_store_slot_v2_t *source, me
     memcpy(target->display_name, source->display_name, sizeof(target->display_name));
 }
 
-static void store_prepare_slot_image(meowkey_store_slot_image_t *image, uint32_t generation) {
+static bool store_prepare_slot_image(meowkey_store_slot_image_t *image, uint32_t generation) {
+    meowkey_store_wrap_metadata_t metadata;
+
     memset(image, 0xff, sizeof(*image));
     memcpy(image->parts.payload, s_store.raw, sizeof(s_store.raw));
     memset(&image->parts.header, 0, sizeof(image->parts.header));
@@ -493,8 +716,19 @@ static void store_prepare_slot_image(meowkey_store_slot_image_t *image, uint32_t
     image->parts.header.version = MEOWKEY_STORE_VERSION;
     image->parts.header.generation = generation;
     image->parts.header.payload_size = MEOWKEY_STORE_SLOT_PAYLOAD_SIZE;
+
+    store_init_wrap_metadata(&metadata);
+    if (!store_payload_crypt_in_place(&metadata, image->parts.payload, sizeof(image->parts.payload)) ||
+        !store_compute_wrap_tag(&metadata, image->parts.payload, sizeof(image->parts.payload), metadata.tag)) {
+        store_secure_zero(&metadata, sizeof(metadata));
+        return false;
+    }
+
+    memcpy(image->parts.header.reserved, &metadata, sizeof(metadata));
     image->parts.header.payload_crc32 = crc32_bytes(image->parts.payload, sizeof(s_store.raw));
     image->parts.header.header_crc32 = store_header_crc(&image->parts.header);
+    store_secure_zero(&metadata, sizeof(metadata));
+    return true;
 }
 
 static bool store_header_is_valid(const meowkey_store_header_t *header) {
@@ -508,9 +742,14 @@ static bool store_header_is_valid(const meowkey_store_header_t *header) {
 static bool store_load_slot(size_t slot_index,
                             meowkey_store_payload_image_t *payload,
                             uint32_t *generation,
-                            uint32_t *payload_crc32) {
+                            uint32_t *payload_crc32,
+                            bool *wrapped) {
     const meowkey_store_slot_image_t *image = store_slot_flash_image(slot_index);
+    const meowkey_store_wrap_metadata_t *metadata =
+        (const meowkey_store_wrap_metadata_t *)image->parts.header.reserved;
     uint32_t actual_payload_crc32;
+    bool have_wrap_metadata;
+    uint8_t expected_tag[MEOWKEY_STORE_WRAP_TAG_SIZE];
 
     if (!store_header_is_valid(&image->parts.header)) {
         return false;
@@ -521,14 +760,30 @@ static bool store_load_slot(size_t slot_index,
         return false;
     }
 
+    have_wrap_metadata = store_wrap_metadata_is_valid(metadata);
+    if (have_wrap_metadata) {
+        if (!store_compute_wrap_tag(metadata, image->parts.payload, MEOWKEY_STORE_SLOT_PAYLOAD_SIZE, expected_tag) ||
+            !store_constant_time_equal(expected_tag, metadata->tag, sizeof(expected_tag))) {
+            store_secure_zero(expected_tag, sizeof(expected_tag));
+            return false;
+        }
+        store_secure_zero(expected_tag, sizeof(expected_tag));
+    }
+
     if (payload != NULL) {
         memcpy(payload->raw, image->parts.payload, sizeof(payload->raw));
+        if (have_wrap_metadata && !store_payload_crypt_in_place(metadata, payload->raw, sizeof(payload->raw))) {
+            return false;
+        }
     }
     if (generation != NULL) {
         *generation = image->parts.header.generation;
     }
     if (payload_crc32 != NULL) {
         *payload_crc32 = actual_payload_crc32;
+    }
+    if (wrapped != NULL) {
+        *wrapped = have_wrap_metadata;
     }
     return true;
 }
@@ -634,14 +889,18 @@ static bool store_commit_payload(void) {
     uint32_t generation = s_store_generation + 1u;
     size_t target_slot_index = s_active_slot_index == 0 ? 1u : 0u;
 
-    store_prepare_slot_image(&image, generation);
+    if (!store_prepare_slot_image(&image, generation)) {
+        return false;
+    }
     if (!store_program_slot(target_slot_index, &image)) {
+        store_secure_zero(&image, sizeof(image));
         return false;
     }
 
     s_active_slot_index = (int)target_slot_index;
     s_store_generation = generation;
     s_store_payload_crc32 = image.parts.header.payload_crc32;
+    store_secure_zero(&image, sizeof(image));
     return true;
 }
 
@@ -883,6 +1142,7 @@ static void store_load_if_needed(void) {
     bool changed = false;
     size_t slot_index;
     bool have_slot = false;
+    bool best_payload_wrapped = false;
     uint32_t best_generation = 0u;
     uint32_t best_payload_crc32 = 0u;
     meowkey_store_payload_image_t best_payload;
@@ -897,8 +1157,13 @@ static void store_load_if_needed(void) {
         meowkey_store_payload_image_t candidate_payload;
         uint32_t candidate_generation = 0u;
         uint32_t candidate_payload_crc32 = 0u;
+        bool candidate_payload_wrapped = false;
 
-        if (!store_load_slot(slot_index, &candidate_payload, &candidate_generation, &candidate_payload_crc32)) {
+        if (!store_load_slot(slot_index,
+                             &candidate_payload,
+                             &candidate_generation,
+                             &candidate_payload_crc32,
+                             &candidate_payload_wrapped)) {
             continue;
         }
         if (!have_slot || candidate_generation > best_generation) {
@@ -906,6 +1171,7 @@ static void store_load_if_needed(void) {
             best_generation = candidate_generation;
             best_payload_crc32 = candidate_payload_crc32;
             best_slot_index = slot_index;
+            best_payload_wrapped = candidate_payload_wrapped;
             best_payload = candidate_payload;
         }
     }
@@ -915,6 +1181,9 @@ static void store_load_if_needed(void) {
         s_store_generation = best_generation;
         s_store_payload_crc32 = best_payload_crc32;
         s_active_slot_index = (int)best_slot_index;
+        if (!best_payload_wrapped) {
+            changed = true;
+        }
     } else if (store_load_from_legacy_if_present()) {
         imported = true;
     }
@@ -1094,6 +1363,7 @@ bool meowkey_store_set_user_presence_config(const meowkey_user_presence_config_t
 
     store_load_if_needed();
     s_store.data.fixed.user_presence = *config;
+    store_mark_user_presence_provenance(&s_store.data.fixed);
     return store_commit_transaction();
 }
 

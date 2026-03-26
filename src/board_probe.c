@@ -23,6 +23,8 @@ enum {
     PROBE_USER_PRESENCE_SAMPLE_INTERVAL_MS = 20,
     PROBE_USER_PRESENCE_MAX_CANDIDATES = 8,
     PROBE_USER_VERIFICATION_MAX_CANDIDATES = 16,
+    PROBE_SECURE_ELEMENT_MAX_CANDIDATES = 24,
+    PROBE_SECURE_ELEMENT_MAX_DETECTIONS = 8,
 };
 
 typedef struct {
@@ -68,6 +70,30 @@ typedef struct {
     const char *hint;
     const char *confidence;
 } user_verification_candidate_t;
+
+typedef struct {
+    i2c_pin_pair_t pair;
+    uint8_t address;
+    const char *family;
+    const char *hint;
+    const char *confidence;
+    const char *probe_method;
+} secure_element_candidate_t;
+
+typedef struct {
+    i2c_pin_pair_t pair;
+    uint8_t address;
+    const char *family;
+    char model[32];
+    char revision_hex[9];
+    const char *config_zone_lock;
+    const char *data_zone_lock;
+    const char *device_certificate;
+    bool supports_p256;
+    bool supports_ecdh;
+    bool supports_rng;
+    bool supports_counters;
+} secure_element_detection_t;
 
 static const i2c_pin_pair_t k_i2c_pairs[] = {
     {0u, 0u, 1u},
@@ -297,6 +323,17 @@ static void reset_i2c_pair(const i2c_pin_pair_t *pair) {
     gpio_disable_pulls(pair->scl_pin);
 }
 
+static void init_i2c_pair(const i2c_pin_pair_t *pair) {
+    i2c_inst_t *i2c = pair->instance == 0u ? i2c0 : i2c1;
+
+    i2c_init(i2c, 100000u);
+    gpio_set_function(pair->sda_pin, GPIO_FUNC_I2C);
+    gpio_set_function(pair->scl_pin, GPIO_FUNC_I2C);
+    gpio_pull_up(pair->sda_pin);
+    gpio_pull_up(pair->scl_pin);
+    sleep_us(100u);
+}
+
 static void scan_i2c_pair(const i2c_pin_pair_t *pair,
                           i2c_pair_probe_t *pair_probe,
                           i2c_eeprom_candidate_t *candidates,
@@ -307,12 +344,7 @@ static void scan_i2c_pair(const i2c_pin_pair_t *pair,
     memset(pair_probe, 0, sizeof(*pair_probe));
     pair_probe->pair = *pair;
 
-    i2c_init(i2c, 100000u);
-    gpio_set_function(pair->sda_pin, GPIO_FUNC_I2C);
-    gpio_set_function(pair->scl_pin, GPIO_FUNC_I2C);
-    gpio_pull_up(pair->sda_pin);
-    gpio_pull_up(pair->scl_pin);
-    sleep_us(100u);
+    init_i2c_pair(pair);
 
     for (address = 0x08u; address <= 0x77u; ++address) {
         bool detected = i2c_probe_address(i2c, address);
@@ -479,6 +511,376 @@ static void collect_user_verification_candidates(const i2c_pair_probe_t *pair_pr
     }
 }
 
+static uint16_t atecc_crc16(const uint8_t *data, size_t length) {
+    uint16_t crc = 0u;
+    size_t index;
+
+    for (index = 0u; index < length; ++index) {
+        uint8_t shift_register;
+        for (shift_register = 0x01u; shift_register != 0u; shift_register <<= 1u) {
+            uint8_t data_bit = (data[index] & shift_register) != 0u ? 1u : 0u;
+            uint8_t crc_bit = (uint8_t)((crc >> 15u) & 0x01u);
+            crc <<= 1u;
+            if (data_bit != crc_bit) {
+                crc ^= 0x8005u;
+            }
+        }
+    }
+
+    return crc;
+}
+
+static bool atecc_response_is_valid(const uint8_t *response, size_t length) {
+    uint16_t expected_crc;
+
+    if (response == NULL || length < 4u || response[0] != length) {
+        return false;
+    }
+
+    expected_crc = (uint16_t)response[length - 2u] | ((uint16_t)response[length - 1u] << 8u);
+    return atecc_crc16(response, length - 2u) == expected_crc;
+}
+
+static void atecc_wake_device(const i2c_pin_pair_t *pair) {
+    reset_i2c_pair(pair);
+    gpio_init(pair->sda_pin);
+    gpio_set_dir(pair->sda_pin, GPIO_OUT);
+    gpio_put(pair->sda_pin, 0u);
+    sleep_us(80u);
+    gpio_put(pair->sda_pin, 1u);
+    sleep_us(10u);
+    init_i2c_pair(pair);
+    sleep_ms(3u);
+}
+
+static void atecc_sleep_device(i2c_inst_t *i2c, uint8_t address) {
+    uint8_t word_address = 0x01u;
+    (void)i2c_write_timeout_us(i2c, address, &word_address, 1u, false, PROBE_I2C_TIMEOUT_US);
+}
+
+static bool atecc_send_command(i2c_inst_t *i2c,
+                               uint8_t address,
+                               uint8_t opcode,
+                               uint8_t param1,
+                               uint16_t param2,
+                               const uint8_t *data,
+                               size_t data_length,
+                               uint8_t *response,
+                               size_t response_length,
+                               uint32_t execution_delay_ms) {
+    uint8_t packet[1u + 1u + 1u + 1u + 2u + 32u + 2u];
+    size_t packet_length = 1u + 7u + data_length;
+    uint16_t crc;
+    int write_result;
+    int read_result;
+
+    if (data_length > 32u || response == NULL || response_length < 4u) {
+        return false;
+    }
+
+    memset(packet, 0, sizeof(packet));
+    packet[0] = 0x03u;
+    packet[1] = (uint8_t)(7u + data_length);
+    packet[2] = opcode;
+    packet[3] = param1;
+    packet[4] = (uint8_t)(param2 & 0xffu);
+    packet[5] = (uint8_t)(param2 >> 8u);
+    if (data_length > 0u) {
+        memcpy(&packet[6], data, data_length);
+    }
+    crc = atecc_crc16(&packet[1], 5u + data_length);
+    packet[packet_length - 2u] = (uint8_t)(crc & 0xffu);
+    packet[packet_length - 1u] = (uint8_t)(crc >> 8u);
+
+    write_result = i2c_write_timeout_us(i2c, address, packet, packet_length, false, PROBE_I2C_TIMEOUT_US);
+    if (write_result != (int)packet_length) {
+        return false;
+    }
+
+    sleep_ms(execution_delay_ms);
+    read_result = i2c_read_timeout_us(i2c, address, response, response_length, false, PROBE_I2C_TIMEOUT_US);
+    return read_result == (int)response_length && atecc_response_is_valid(response, response_length);
+}
+
+static bool atecc_info_revision(i2c_inst_t *i2c, uint8_t address, uint8_t revision[4]) {
+    uint8_t response[7];
+
+    if (!atecc_send_command(i2c, address, 0x30u, 0x00u, 0x0000u, NULL, 0u, response, sizeof(response), 4u)) {
+        return false;
+    }
+
+    memcpy(revision, &response[1], 4u);
+    return true;
+}
+
+static bool atecc_read_word(i2c_inst_t *i2c, uint8_t address, uint8_t zone, uint16_t word_address, uint8_t output[4]) {
+    uint8_t response[7];
+
+    if (!atecc_send_command(i2c, address, 0x02u, zone, word_address, NULL, 0u, response, sizeof(response), 4u)) {
+        return false;
+    }
+
+    memcpy(output, &response[1], 4u);
+    return true;
+}
+
+static const char *atecc_lock_state_name(uint8_t value) {
+    if (value == 0x00u) {
+        return "locked";
+    }
+    if (value == 0x55u) {
+        return "unlocked";
+    }
+    return "unknown";
+}
+
+static const char *atecc_device_certificate_state(i2c_inst_t *i2c, uint8_t address) {
+    static const uint8_t k_certificate_slots[] = {10u, 11u, 12u, 13u};
+    bool any_readable = false;
+    size_t index;
+
+    for (index = 0u; index < sizeof(k_certificate_slots); ++index) {
+        uint8_t word[4];
+        size_t byte_index;
+        bool non_blank = false;
+        bool non_zero = false;
+
+        if (!atecc_read_word(i2c, address, 0x02u, (uint16_t)(k_certificate_slots[index] << 3u), word)) {
+            continue;
+        }
+
+        any_readable = true;
+        for (byte_index = 0u; byte_index < sizeof(word); ++byte_index) {
+            non_blank = non_blank || (word[byte_index] != 0xffu);
+            non_zero = non_zero || (word[byte_index] != 0x00u);
+        }
+        if (non_blank && non_zero) {
+            return "present";
+        }
+    }
+
+    return any_readable ? "absent" : "unknown";
+}
+
+static void format_atecc_model_name(const uint8_t revision[4], char *output, size_t output_capacity) {
+    if (output_capacity == 0u) {
+        return;
+    }
+
+    if (revision[2] == 0x60u) {
+        (void)snprintf(output, output_capacity, "ATECC608-compatible");
+    } else if (revision[2] == 0x50u) {
+        (void)snprintf(output, output_capacity, "ATECC508-compatible");
+    } else {
+        (void)snprintf(output, output_capacity, "ATECC ECC-compatible");
+    }
+}
+
+static void add_secure_element_candidate(secure_element_candidate_t *candidates,
+                                         size_t *candidate_count,
+                                         const i2c_pin_pair_t *pair,
+                                         uint8_t address,
+                                         const char *family,
+                                         const char *hint,
+                                         const char *confidence,
+                                         const char *probe_method) {
+    size_t index;
+
+    for (index = 0u; index < *candidate_count; ++index) {
+        if (candidates[index].pair.instance == pair->instance &&
+            candidates[index].pair.sda_pin == pair->sda_pin &&
+            candidates[index].pair.scl_pin == pair->scl_pin &&
+            candidates[index].address == address) {
+            return;
+        }
+    }
+
+    if (*candidate_count >= PROBE_SECURE_ELEMENT_MAX_CANDIDATES) {
+        return;
+    }
+
+    candidates[*candidate_count].pair = *pair;
+    candidates[*candidate_count].address = address;
+    candidates[*candidate_count].family = family;
+    candidates[*candidate_count].hint = hint;
+    candidates[*candidate_count].confidence = confidence;
+    candidates[*candidate_count].probe_method = probe_method;
+    *candidate_count += 1u;
+}
+
+static bool maybe_add_whitelisted_secure_element_candidate(const i2c_pin_pair_t *pair,
+                                                           uint8_t address,
+                                                           secure_element_candidate_t *candidates,
+                                                           size_t *candidate_count) {
+    if (address >= 0x60u && address <= 0x67u) {
+        add_secure_element_candidate(candidates,
+                                     candidate_count,
+                                     pair,
+                                     address,
+                                     "microchip-atecc-ecc",
+                                     "atecc-wake-required-address",
+                                     "medium",
+                                     "whitelist-address");
+        return true;
+    }
+    if (address == 0x30u) {
+        add_secure_element_candidate(candidates,
+                                     candidate_count,
+                                     pair,
+                                     address,
+                                     "infineon-optiga-family",
+                                     "common-optiga-i2c-address",
+                                     "low",
+                                     "whitelist-address");
+        return true;
+    }
+    if (address == 0x48u) {
+        add_secure_element_candidate(candidates,
+                                     candidate_count,
+                                     pair,
+                                     address,
+                                     "nxp-se05x-family",
+                                     "common-se05x-i2c-address",
+                                     "low",
+                                     "whitelist-address");
+        return true;
+    }
+    if (address == 0x2eu) {
+        add_secure_element_candidate(candidates,
+                                     candidate_count,
+                                     pair,
+                                     address,
+                                     "tpm-i2c-family",
+                                     "common-tpm-i2c-address",
+                                     "low",
+                                     "whitelist-address");
+        return true;
+    }
+
+    return false;
+}
+
+static bool probe_atecc_detection(const i2c_pin_pair_t *pair,
+                                  uint8_t address,
+                                  secure_element_detection_t *detection) {
+    i2c_inst_t *i2c = pair->instance == 0u ? i2c0 : i2c1;
+    uint8_t revision[4];
+    uint8_t lock_bytes[4];
+    bool have_lock_bytes = false;
+    bool detected = false;
+
+    atecc_wake_device(pair);
+    detected = atecc_info_revision(i2c, address, revision);
+    if (!detected) {
+        reset_i2c_pair(pair);
+        return false;
+    }
+
+    memset(detection, 0, sizeof(*detection));
+    detection->pair = *pair;
+    detection->address = address;
+    detection->family = "microchip-atecc-ecc";
+    bytes_to_hex(revision, sizeof(revision), detection->revision_hex, sizeof(detection->revision_hex));
+    format_atecc_model_name(revision, detection->model, sizeof(detection->model));
+
+    have_lock_bytes = atecc_read_word(i2c, address, 0x00u, 21u, lock_bytes);
+    detection->config_zone_lock = have_lock_bytes ? atecc_lock_state_name(lock_bytes[3]) : "unknown";
+    detection->data_zone_lock = have_lock_bytes ? atecc_lock_state_name(lock_bytes[2]) : "unknown";
+    detection->device_certificate = atecc_device_certificate_state(i2c, address);
+    detection->supports_p256 = true;
+    detection->supports_ecdh = true;
+    detection->supports_rng = true;
+    detection->supports_counters = true;
+
+    atecc_sleep_device(i2c, address);
+    reset_i2c_pair(pair);
+    return true;
+}
+
+static void emit_secure_element_report(const i2c_pair_probe_t *pair_probes, size_t pair_probe_count) {
+    secure_element_candidate_t candidates[PROBE_SECURE_ELEMENT_MAX_CANDIDATES];
+    secure_element_detection_t detections[PROBE_SECURE_ELEMENT_MAX_DETECTIONS];
+    size_t candidate_count = 0u;
+    size_t detection_count = 0u;
+    size_t pair_index;
+
+    memset(candidates, 0, sizeof(candidates));
+    memset(detections, 0, sizeof(detections));
+
+    for (pair_index = 0u; pair_index < pair_probe_count; ++pair_index) {
+        size_t device_index;
+        for (device_index = 0u; device_index < pair_probes[pair_index].device_count; ++device_index) {
+            (void)maybe_add_whitelisted_secure_element_candidate(&pair_probes[pair_index].pair,
+                                                                 pair_probes[pair_index].devices[device_index],
+                                                                 candidates,
+                                                                 &candidate_count);
+        }
+    }
+
+    for (pair_index = 0u; pair_index < pair_probe_count; ++pair_index) {
+        static const uint8_t k_atecc_addresses[] = {0x60u, 0x61u, 0x62u, 0x63u, 0x64u, 0x65u, 0x66u, 0x67u};
+        size_t address_index;
+
+        for (address_index = 0u; address_index < sizeof(k_atecc_addresses); ++address_index) {
+            secure_element_detection_t detection;
+            if (detection_count >= PROBE_SECURE_ELEMENT_MAX_DETECTIONS) {
+                break;
+            }
+            if (!probe_atecc_detection(&pair_probes[pair_index].pair, k_atecc_addresses[address_index], &detection)) {
+                continue;
+            }
+
+            detections[detection_count++] = detection;
+            add_secure_element_candidate(candidates,
+                                         &candidate_count,
+                                         &pair_probes[pair_index].pair,
+                                         k_atecc_addresses[address_index],
+                                         "microchip-atecc-ecc",
+                                         "atecc-info-revision-probe",
+                                         "high",
+                                         "wake+info+read");
+        }
+    }
+
+    printf("  ,\"secureElement\": {\n");
+    printf("    \"probeMethod\": \"whitelist-safe-readonly\",\n");
+    printf("    \"candidates\": [\n");
+    for (pair_index = 0u; pair_index < candidate_count; ++pair_index) {
+        printf("      {\"instance\": %u, \"sdaPin\": %u, \"sclPin\": %u, \"address\": \"0x%02x\", \"family\": \"%s\", \"hint\": \"%s\", \"confidence\": \"%s\", \"probeMethod\": \"%s\"}%s\n",
+               candidates[pair_index].pair.instance,
+               candidates[pair_index].pair.sda_pin,
+               candidates[pair_index].pair.scl_pin,
+               candidates[pair_index].address,
+               candidates[pair_index].family,
+               candidates[pair_index].hint,
+               candidates[pair_index].confidence,
+               candidates[pair_index].probe_method,
+               pair_index + 1u == candidate_count ? "" : ",");
+    }
+    printf("    ],\n");
+    printf("    \"detections\": [\n");
+    for (pair_index = 0u; pair_index < detection_count; ++pair_index) {
+        printf("      {\"instance\": %u, \"sdaPin\": %u, \"sclPin\": %u, \"address\": \"0x%02x\", \"family\": \"%s\", \"model\": \"%s\", \"revisionHex\": \"%s\", \"configZoneLock\": \"%s\", \"dataZoneLock\": \"%s\", \"deviceCertificate\": \"%s\", \"capabilities\": {\"p256\": %s, \"ecdh\": %s, \"rng\": %s, \"counters\": %s}}%s\n",
+               detections[pair_index].pair.instance,
+               detections[pair_index].pair.sda_pin,
+               detections[pair_index].pair.scl_pin,
+               detections[pair_index].address,
+               detections[pair_index].family,
+               detections[pair_index].model,
+               detections[pair_index].revision_hex,
+               detections[pair_index].config_zone_lock,
+               detections[pair_index].data_zone_lock,
+               detections[pair_index].device_certificate,
+               detections[pair_index].supports_p256 ? "true" : "false",
+               detections[pair_index].supports_ecdh ? "true" : "false",
+               detections[pair_index].supports_rng ? "true" : "false",
+               detections[pair_index].supports_counters ? "true" : "false",
+               pair_index + 1u == detection_count ? "" : ",");
+    }
+    printf("    ]\n");
+    printf("  }\n");
+}
+
 static void emit_i2c_report(void) {
     i2c_pair_probe_t pair_probes[sizeof(k_i2c_pairs) / sizeof(k_i2c_pairs[0])];
     i2c_eeprom_candidate_t candidates[PROBE_I2C_MAX_EEPROM_CANDIDATES];
@@ -553,6 +955,7 @@ static void emit_i2c_report(void) {
     }
     printf("    ]\n");
     printf("  }\n");
+    emit_secure_element_report(pair_probes, sizeof(k_i2c_pairs) / sizeof(k_i2c_pairs[0]));
 }
 
 void meowkey_board_probe_emit_report(void) {

@@ -94,7 +94,7 @@ USB 接收到 HID 输出报文后，流程是：
 
 - 所有已创建凭据都会被当作 discoverable credential 存储。
 - `getAssertion` 无 `allowList` 且命中多条 discoverable credential 时，会返回 `numberOfCredentials` 并允许继续走 `getNextAssertion`。
-- `makeCredential` 当前每次都会要求一次 UP，除非设备持久化配置已经把 UP 源切成 `none`。
+- `makeCredential` 当前每次都会要求一次 UP，除非当前生效的 UP 配置已经把 UP 源切成 `none`。
 - `getAssertion` 当前也会要求 UP，但对“前一次成功断言后的同一语义重试”会开放一次 `1200ms` 的一次性复用窗口。
 - `getNextAssertion` 依赖前一次 `getAssertion` 留下的 pending state，不会再次要求新的 UP。
 - 当前已经支持可配置的 UP 源。
@@ -125,7 +125,7 @@ USB 接收到 HID 输出报文后，流程是：
 - 每次 `getPinToken` 成功都会重新签发新 token。
 - `pinHash` 和重试计数仍持久化在 Flash。
 - token 权限范围没有实现，因此直接拒绝权限 token 子命令。
-- UP 配置已经有持久化接口，也预留了调试 HID 读写入口；桌面 UI 还没接上，但后续只需要对接现有 `DIAG 5/6`。
+- UP 配置已经有持久化接口和会话态覆盖接口，也预留了调试 HID 读写入口；桌面 UI 还没接上，但后续可以直接对接现有 `DIAG 5/6/7/8`。
 
 ## 8. 凭据存储
 
@@ -151,7 +151,7 @@ USB 接收到 HID 输出报文后，流程是：
 当前存储层的现实限制：
 
 - 仍然没有磨损均衡。
-- 私钥与 PIN 哈希仍明文落在普通 Flash。
+- 私钥、`credRandom` 与 PIN 哈希当前已经做了设备绑定 wrapping，但还不是安全元件级机密保护。
 - 主区已经改成带 `generation/crc` 的 A/B 事务提交，`signCount` journal 也会和主区代际绑定。
 - “清空凭据存储”当前只会清空 credential slots，不会清掉 PIN 状态和 UP 配置。
 - 这已经能扛掉电，但还不是量产级的 secure storage。
@@ -170,6 +170,7 @@ USB 接收到 HID 输出报文后，流程是：
 - 通过 USB 串口输出 JSON 探测报告
 - 扫描 GPIO 编码电阻/拔码候选
 - 扫描常见 I2C EEPROM/ID 候选
+- 扫描常见安全元件地址，并对部分器件执行安全只读识别
 - 由 `scripts/probe-board.ps1` 生成 preset 草案
 
 ## 10. 存储布局

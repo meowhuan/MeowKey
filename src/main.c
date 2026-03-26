@@ -8,6 +8,7 @@
 #include "diagnostics.h"
 #include "pico/stdlib.h"
 #include "pico/status_led.h"
+#include "security_status.h"
 #include "tusb.h"
 #include "user_presence.h"
 
@@ -114,6 +115,7 @@ int main(void) {
     board_init();
     meowkey_led_init();
     meowkey_diag_init();
+    meowkey_security_status_log_summary();
     meowkey_board_id_init();
     meowkey_board_id_log_summary();
     meowkey_user_presence_init();

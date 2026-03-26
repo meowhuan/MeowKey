@@ -28,14 +28,17 @@ MeowKey 现在是“可构建、可联调、可验证协议行为”的开发固
 
 - 量产级用户在场（UP）硬件路径
 - 用户验证（UV）硬件路径
-- 安全启动与 OTP 策略定型
-- 回滚保护策略
+- 板载安全元件或真正不可导出的密钥边界
 - 原子化 / 磨损均衡的存储层
 - 完整的凭据管理命令
 - 多断言 / 凭据枚举流程
 - 更严格的 CTAP2 兼容性验证
 
 这些缺口已经整理在 [docs/known-gaps.md](docs/known-gaps.md) 和 [docs/security.md](docs/security.md)。
+
+当前仓库已经支持可选的 RP2350 secure boot、OTP 公钥哈希材料生成和 anti-rollback 镜像元数据，但默认不会替用户自动烧录 OTP。
+如果你信任本项目并希望提升设备内数据对恶意固件的防护，应主动启用 secure boot。
+这仍然不等于“RP2350 在模拟安全元件”；当前设备唯一材料 wrapping 只是比明文落盘更强的 MCU 侧保护，不是不可导出私钥边界。
 
 ## 底板与预设
 
@@ -70,6 +73,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -BuildDir build -No
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -BuildDir build-hardened -NoPicotool -IgnoreGitGlobalConfig -DisableDebugHid
+```
+
+启用 secure boot 与 anti-rollback 的硬化构建：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 `
+  -BuildDir build-hardened-secure-ready `
+  -DisableDebugHid `
+  -EnableSignedBoot `
+  -EnableAntiRollback
 ```
 
 指定版本号：
@@ -134,6 +147,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1
 
 - 可手工复核的 GPIO `UP` 按键候选
 - 可手工复核的 `UV` 外设候选（当前主要是启发式 I2C 候选，不会自动启用）
+- 可手工复核的 `secureElement` 候选与已支持器件的只读识别摘要
 
 如果自动探测不到正确串口，可以手工指定：
 
@@ -169,8 +183,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1 -OutputPath .
   保留 Debug HID，便于 WebUI / Rust 管理器联调；不适合直接分发给终端用户。
 - `generic-hardened`
   关闭 Debug HID，仅保留标准 FIDO HID；这是更接近可发布状态的构建基线。
+- `generic-hardened-secure-boot-ready`
+  在 `generic-hardened` 基础上启用签名镜像与 anti-rollback 元数据，并附带 OTP 公钥哈希材料；是否真正烧录 OTP 仍由用户决定。
 - `preset-usb-a-baseboard-v1-debug` / `preset-usb-a-baseboard-v1-hardened`
   面向当前这块已适配 USB-A 底板配件的预设固件，包名会直接带上预设用途。
+- `preset-...-hardened-secure-boot-ready`
+  对应预设板卡的 secure-boot-ready 硬化发行包。
 - `probe-board-id`
   独立 USB 串口探测固件，用于读取 GPIO 编码电阻/拔码和 I2C EEPROM/ID 候选信息，并生成 preset 草案。
 

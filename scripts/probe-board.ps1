@@ -262,6 +262,44 @@ function Resolve-UserVerificationDraft {
     }
 }
 
+function Add-SecureElementNotes {
+    param(
+        $Report,
+        [System.Collections.Generic.List[string]]$Notes
+    )
+
+    if (-not ($Report.PSObject.Properties.Name -contains "secureElement") -or -not $Report.secureElement) {
+        return
+    }
+
+    $detections = @()
+    $candidates = @()
+    if ($Report.secureElement.PSObject.Properties.Name -contains "detections") {
+        $detections = @($Report.secureElement.detections)
+    }
+    if ($Report.secureElement.PSObject.Properties.Name -contains "candidates") {
+        $candidates = @($Report.secureElement.candidates)
+    }
+
+    if ($detections.Count -gt 0) {
+        $summary = ($detections | ForEach-Object {
+            "$($_.model) on I2C$($_.instance) $($_.sdaPin)/$($_.sclPin) @$($_.address)"
+        }) -join ", "
+        $Notes.Add("Secure-element detections were observed: $summary. Treat this as hardware inventory only; you still need to confirm provisioning, slot policy, and whether the firmware actually binds credential operations to the chip.")
+        return
+    }
+
+    if ($candidates.Count -gt 0) {
+        $summary = ($candidates | ForEach-Object {
+            "$($_.family) on I2C$($_.instance) $($_.sdaPin)/$($_.sclPin) @$($_.address)"
+        }) -join ", "
+        $Notes.Add("Potential secure-element candidates were observed: $summary. This is only a heuristic until a positive read-only identification succeeds.")
+        return
+    }
+
+    $Notes.Add("No secure-element candidates were identified by the current whitelist/read-only probe.")
+}
+
 function Resolve-PresetDraft {
     param($Report)
 
@@ -271,6 +309,7 @@ function Resolve-PresetDraft {
     $selectedI2c = Resolve-I2cCandidate -Report $Report -Notes $notes
     $userPresence = Resolve-UserPresenceDraft -Report $Report -Notes $notes
     $userVerification = Resolve-UserVerificationDraft -Report $Report -Notes $notes
+    Add-SecureElementNotes -Report $Report -Notes $notes
     $resolvedMode = $BoardIdMode
 
     if ($selectedGpioPins.Count -eq 0 -and $forcedPins.Count -gt 0) {

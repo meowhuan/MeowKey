@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       PICO_SDK_CI_PATH: ${{ github.workspace }}/.cache/pico-sdk-ci
+      PICOTOOL_FETCH_DIR: ${{ github.workspace }}/.cache/picotool-ci
     steps:
       - uses: actions/checkout@v4
 
@@ -56,6 +57,21 @@ jobs:
 
       - name: Build probe firmware
         run: cmake --build build-ci --parallel --target meowkey_probe
+
+      - name: Build firmware (secure-boot-ready hardened)
+        run: |
+          openssl ecparam -name secp256k1 -genkey -noout -out "${RUNNER_TEMP}/meowkey-secureboot.pem"
+          cmake -S . -B build-ci-secure-ready -G Ninja \
+            -DPICO_BOARD=meowkey_rp2350_usb \
+            -DPICO_SDK_PATH="${PICO_SDK_CI_PATH}" \
+            -DPICOTOOL_FETCH_FROM_GIT_PATH="${PICOTOOL_FETCH_DIR}" \
+            -DMEOWKEY_ENABLE_DEBUG_HID=OFF \
+            -DMEOWKEY_ENABLE_SIGNED_BOOT=ON \
+            -DMEOWKEY_ENABLE_ANTI_ROLLBACK=ON \
+            -DMEOWKEY_SIGNING_KEY="${RUNNER_TEMP}/meowkey-secureboot.pem" \
+            -DMEOWKEY_VERSION_LABEL=ci
+          cmake --build build-ci-secure-ready --parallel
+          test -f build-ci-secure-ready/meowkey.otp.json
 
   desktop:
     runs-on: windows-latest

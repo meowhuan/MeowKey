@@ -14,6 +14,7 @@ jobs:
     env:
       PICOTOOL_FETCH_DIR: ${{ github.workspace }}/.cache/picotool-release
       PICO_SDK_CI_PATH: ${{ github.workspace }}/.cache/pico-sdk-release
+      MEOWKEY_SECUREBOOT_KEY_PATH: ${{ github.workspace }}/.cache/meowkey-secureboot.pem
     steps:
       - uses: actions/checkout@v4
 
@@ -51,8 +52,24 @@ jobs:
         run: |
           git clone --branch 2.2.0 --depth 1 --recurse-submodules --shallow-submodules https://github.com/raspberrypi/pico-sdk.git "${PICO_SDK_CI_PATH}"
 
+      - name: Materialize optional secure boot signing key
+        env:
+          MEOWKEY_SECUREBOOT_PEM_B64: ${{ secrets.MEOWKEY_SECUREBOOT_PEM_B64 }}
+        run: |
+          if [[ -n "${MEOWKEY_SECUREBOOT_PEM_B64}" ]]; then
+            mkdir -p "$(dirname "${MEOWKEY_SECUREBOOT_KEY_PATH}")"
+            printf '%s' "${MEOWKEY_SECUREBOOT_PEM_B64}" | base64 -d > "${MEOWKEY_SECUREBOOT_KEY_PATH}"
+            echo "MEOWKEY_SECUREBOOT_ENABLED=true" >> "$GITHUB_ENV"
+          else
+            echo "MEOWKEY_SECUREBOOT_ENABLED=false" >> "$GITHUB_ENV"
+          fi
+
       - name: Build and package release artifacts
         run: |
+          SECURE_BOOT_ARGS=()
+          if [[ "${MEOWKEY_SECUREBOOT_ENABLED}" == "true" ]]; then
+            SECURE_BOOT_ARGS+=(--secure-boot-signing-key "${MEOWKEY_SECUREBOOT_KEY_PATH}")
+          fi
           python3 scripts/release-artifacts.py \
             --tag "${RELEASE_TAG}" \
             --version-major "${MEOWKEY_VERSION_MAJOR}" \
@@ -61,7 +78,8 @@ jobs:
             --version-label "${MEOWKEY_VERSION_LABEL}" \
             --pico-sdk-path "${PICO_SDK_CI_PATH}" \
             --picotool-fetch-path "${PICOTOOL_FETCH_DIR}" \
-            --dist-dir dist
+            --dist-dir dist \
+            "${SECURE_BOOT_ARGS[@]}"
 
       - uses: actions/upload-artifact@v4
         with:

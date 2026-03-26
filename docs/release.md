@@ -12,6 +12,7 @@ GitHub Actions 的 `ci.yml` 会做两类检查。
 - `scripts/gui_server.py` 语法校验
 - 默认开发固件离线构建
 - 关闭 Debug HID 的硬化固件离线构建
+- 临时签名密钥下的 secure-boot-ready 硬化固件构建
 - `probe` 固件离线构建
 
 这里使用系统安装的 `arm-none-eabi-gcc`、`cmake` 和 `ninja`，不依赖本地 `tools/`。
@@ -48,10 +49,14 @@ GitHub Actions 的 `ci.yml` 会做两类检查。
   通用开发固件，保留 Debug HID。
 - `generic-hardened`
   通用分发基线，关闭 Debug HID。
+- `generic-hardened-secure-boot-ready`
+  通用 secure-boot-ready 硬化固件；只有在 release workflow 配置了签名密钥 secret 时才会产出。
 - `preset-<preset-package-label>-debug`
   预设匹配的开发固件，当前会为 `usb-a-baseboard-v1` 产出对应 zip。
 - `preset-<preset-package-label>-hardened`
   预设匹配的硬化固件。
+- `preset-<preset-package-label>-hardened-secure-boot-ready`
+  预设匹配的 secure-boot-ready 硬化固件；同样依赖 release workflow 中的签名密钥 secret。
 - `probe-board-id`
   独立板卡探测固件，用于生成新的 preset 草案。
 
@@ -68,6 +73,10 @@ GitHub Actions 的 `ci.yml` 会做两类检查。
 - `manifest.json`
 - `flash.ps1`
 - `flash.sh`
+
+`*-secure-boot-ready` 发行包在上述基础上还会额外包含：
+
+- `meowkey.otp.json`
 
 `probe-board-id` zip 会打包：
 
@@ -102,6 +111,8 @@ GitHub Release 页面会直接附上全部 zip 包和这一份统一校验清单
 - `MEOWKEY_VERSION_PATCH`
 - 可选的 `MEOWKEY_VERSION_LABEL`
 
+如果启用了 anti-rollback，默认 rollback 版本会按紧凑编码 `major * 64 + minor * 8 + patch` 生成；`minor` 和 `patch` 必须不大于 `7`。默认 12 个 rollback OTP 行可提供 `288` 个版本槽，扩展 row 列表后容量也会同步增加。`VersionLabel` 不参与比较。
+
 正式 release 可以不带 `VersionLabel`；预发布 tag 会自动把 `-beta.2` 这类后缀写入 `VersionLabel`。
 同时，带后缀的 tag 也会在 GitHub Release 上自动标记为 `prerelease`；纯 `vX.Y.Z` 则继续作为正式 release 发布。
 
@@ -131,11 +142,11 @@ release workflow 只保证：
 
 - 固件能构建
 - 产物会被打包
-- generic / preset / probe 三类用途可区分
+- generic / preset / probe / secure-boot-ready 四类用途可区分
 
 它不保证：
 
 - FIDO 认证通过
 - 板上真实行为正确
-- secure boot 已启用
+- 用户已经把 OTP 公钥哈希真正烧录到设备
 - 存储层已经具备掉电安全

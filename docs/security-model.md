@@ -15,6 +15,7 @@
 
 - `debug` 构建不能被当作可信认证器边界。
 - `hardened` 只是去掉开发后门后的较小攻击面基线，不代表敏感材料已经得到硬件保护。
+- 当前 RP2350 也不被当作安全元件；设备唯一材料 wrapping 只是 MCU 侧保护，不是不可导出密钥边界。
 
 ## 2. 设备当前暴露的接口
 
@@ -44,7 +45,8 @@
 
 ## 4. User Presence 当前如何工作
 
-- UP 配置会持久化到 Flash。
+- 固件会把一份 UP baseline 持久化到 Flash。
+- 另外还支持一份仅当前上电有效的会话态 UP 覆盖，不落盘。
 - 当前配置项包括 `source`、`gpioPin`、`gpioActiveLow`、`tapCount`、`gestureWindowMs`、`requestTimeoutMs`。
 - 默认编译配置是 `source=bootsel`、`tapCount=2`、`gestureWindowMs=750`、`requestTimeoutMs=8000`。
 - `source=none` 时，运行时 UP 直接放行。
@@ -65,7 +67,8 @@
 安全上的直接含义是：
 
 - `source=none` 会让后续注册/断言失去物理确认。
-- debug 构建上的主机可通过 Debug HID `DIAG 6` 持久化改写这条策略。
+- debug 构建上的主机可通过 Debug HID `DIAG 6` 持久化改写 baseline，也可通过 `DIAG 7` 只改当前上电会话。
+- 当前 `hardened` 启动不会信任 legacy 或 Debug HID 写入的持久化 UP 配置；一旦检测到这类状态，会回退到编译默认值并重新落盘。
 
 ## 5. Client PIN / UV 当前如何工作
 
@@ -134,24 +137,28 @@ PIN 状态当前是这样保存和校验的：
 - 主区掉电一致性比早期整区重写更强。
 - `signCount` 不再要求每次断言都重写整个主区。
 - journal 不会跨错的主区代际直接复用。
+- 主区 payload 当前已经改成用设备唯一材料派生出的密钥做 at-rest wrapping，并附带 keyed tag 校验。
 
 当前仍然没有做到的事：
 
-- 私钥或 PIN 材料的加密落盘
 - 磨损均衡
 - 安全元件 / OTP 绑定的机密保护
+- 真正不可导出的密钥边界
 
 另外还有两个容易误解的点：
 
 - Debug HID 的“清空凭据存储”只会清掉 credential slots，不会清掉 PIN 状态和 UP 配置。
-- 重新刷固件也不会自动把已保存的 UP 配置恢复成新的编译默认值。
+- `DIAG 6` 写入的 UP baseline 会在 debug 重刷之间保留；`DIAG 7` 的会话态覆盖只在当前上电有效。
+- 当前 `hardened` 启动会拒绝继承 legacy 或 Debug HID 写入的持久化 UP 状态，并恢复到编译默认值。
 
 ## 8. Debug HID 当前到底能做什么
 
 - `DIAG 1` 读取诊断日志快照。
 - `DIAG 2` 清空诊断日志。
-- `DIAG 5` 读取当前持久化 UP 配置。
+- `DIAG 5` 读取当前生效的 UP 配置摘要，并附带持久化 baseline 摘要。
 - `DIAG 6` 写入新的持久化 UP 配置。
+- `DIAG 7` 写入新的会话态 UP 配置，仅影响当前上电。
+- `DIAG 8` 清除会话态 UP 覆盖，恢复到当前持久化 baseline。
 
 如果编译了危险调试命令，还会额外支持：
 
@@ -169,14 +176,16 @@ PIN 状态当前是这样保存和校验的：
 因此在 debug 构建上：
 
 - 主机不仅能观察调试状态，还能改变后续认证策略。
-- 把 `source` 写成 `none` 后，设备会在之后的注册/断言里跳过物理确认，直到配置被改回去。
+- 把 `source` 写成 `none` 后，设备会在当前会话里立即跳过物理确认。
+- 如果通过 `DIAG 6` 改写持久化 baseline，这个状态会在后续 debug 重刷之间保留，直到配置被改回去。
+- 当前 `hardened` 启动会拒绝继承 legacy / Debug HID 持久化的 UP 状态，所以风险重点不再是“debug 可永久降级 hardened”，而是“debug 会污染 debug 自身的后续状态，并破坏当下会话的物理确认语义”。
 
 ## 9. 当前最主要的剩余安全问题
 
-- 私钥、`credRandom`、PIN 哈希仍明文放在普通 Flash。
+- 私钥、`credRandom`、PIN 哈希虽然已经不再直接明文落盘，但当前 wrapping 仍依赖主 MCU 可访问的设备唯一材料，不等于安全元件或真正不可导出的密钥边界。
 - 当前 UV 只是 PIN 语义，没有更强的本地受信输入。
 - 当前没有权限范围 token，也没有基于 RP 的细粒度授权。
-- 当前没有量产级 secure boot / rollback policy。
+- 仓库已经支持可选的 secure boot / OTP / anti-rollback 构建链路，但默认不替用户烧录 OTP，也还没有量产级 provisioning / 恢复流程。
 - `webauthn.c` 里的部分敏感临时缓冲区仍未系统清零，特别是 `hmac-secret` 和签名相关的中间数据。
 - debug 构建上的 Debug HID 仍然足以破坏“未来每次操作都要物理确认”的假设。
 
@@ -193,4 +202,4 @@ PIN 状态当前是这样保存和校验的：
 
 - `debug` 构建是协议联调设备。
 - `hardened` 构建是去掉开发后门后的较小攻击面基线。
-- 真正的保密边界、量产恢复链路、secure boot 策略和硬件级机密保护都还没有完成。
+- 真正的不可导出私钥边界、量产恢复链路和硬件级机密保护都还没有完成。

@@ -27,7 +27,10 @@ enum {
 };
 
 static meowkey_user_presence_config_t s_cached_config;
+static meowkey_user_presence_config_t s_persisted_config;
+static meowkey_user_presence_config_t s_session_config;
 static bool s_cached_config_ready = false;
+static bool s_session_config_active = false;
 static int8_t s_configured_gpio_pin = GPIO_PIN_UNINITIALIZED;
 
 static void load_default_config(meowkey_user_presence_config_t *config) {
@@ -83,6 +86,11 @@ static void configure_gpio_source(const meowkey_user_presence_config_t *config) 
     s_configured_gpio_pin = config->gpio_pin;
 }
 
+static void apply_effective_config(void) {
+    s_cached_config = s_session_config_active ? s_session_config : s_persisted_config;
+    configure_gpio_source(&s_cached_config);
+}
+
 static void cache_config_if_needed(void) {
     meowkey_user_presence_config_t config;
 
@@ -96,8 +104,8 @@ static void cache_config_if_needed(void) {
         load_default_config(&config);
     }
 
-    s_cached_config = config;
-    configure_gpio_source(&s_cached_config);
+    s_persisted_config = config;
+    apply_effective_config();
     s_cached_config_ready = true;
 }
 
@@ -233,18 +241,64 @@ void meowkey_user_presence_get_config(meowkey_user_presence_config_t *config) {
     }
 }
 
+void meowkey_user_presence_get_persisted_config(meowkey_user_presence_config_t *config) {
+    cache_config_if_needed();
+    if (config != NULL) {
+        *config = s_persisted_config;
+    }
+}
+
 bool meowkey_user_presence_set_config(const meowkey_user_presence_config_t *config) {
+    cache_config_if_needed();
     if (!config_is_valid(config) || !meowkey_store_set_user_presence_config(config)) {
         return false;
     }
 
-    s_cached_config = *config;
-    configure_gpio_source(&s_cached_config);
+    s_persisted_config = *config;
+    apply_effective_config();
     s_cached_config_ready = true;
-    meowkey_diag_logf("userPresence config updated source=%u gpio=%d taps=%u timeoutMs=%u",
+    meowkey_diag_logf("userPresence persistent config updated source=%u gpio=%d taps=%u timeoutMs=%u sessionOverride=%u",
+                      config->source,
+                      (int)config->gpio_pin,
+                      config->tap_count,
+                      config->request_timeout_ms,
+                      s_session_config_active ? 1u : 0u);
+    return true;
+}
+
+bool meowkey_user_presence_has_session_override(void) {
+    cache_config_if_needed();
+    return s_session_config_active;
+}
+
+bool meowkey_user_presence_set_session_config(const meowkey_user_presence_config_t *config) {
+    if (!config_is_valid(config)) {
+        return false;
+    }
+
+    cache_config_if_needed();
+    s_session_config = *config;
+    s_session_config_active = true;
+    apply_effective_config();
+    meowkey_diag_logf("userPresence session override enabled source=%u gpio=%d taps=%u timeoutMs=%u",
                       s_cached_config.source,
                       (int)s_cached_config.gpio_pin,
                       s_cached_config.tap_count,
                       s_cached_config.request_timeout_ms);
     return true;
+}
+
+void meowkey_user_presence_clear_session_config(void) {
+    cache_config_if_needed();
+    if (!s_session_config_active) {
+        return;
+    }
+
+    s_session_config_active = false;
+    apply_effective_config();
+    meowkey_diag_logf("userPresence session override cleared source=%u gpio=%d taps=%u timeoutMs=%u",
+                      s_cached_config.source,
+                      (int)s_cached_config.gpio_pin,
+                      s_cached_config.tap_count,
+                      s_cached_config.request_timeout_ms);
 }

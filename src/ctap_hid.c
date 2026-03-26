@@ -241,14 +241,20 @@ static const char *user_presence_source_name(uint8_t source) {
 
 static size_t describe_user_presence(char *output, size_t output_capacity) {
     meowkey_user_presence_config_t config;
+    meowkey_user_presence_config_t persisted_config;
     bool enabled;
+    bool persisted_enabled;
+    bool session_override;
 
     if (output_capacity == 0u) {
         return 0u;
     }
 
     meowkey_user_presence_get_config(&config);
+    meowkey_user_presence_get_persisted_config(&persisted_config);
     enabled = meowkey_user_presence_is_enabled();
+    persisted_enabled = persisted_config.source != MEOWKEY_USER_PRESENCE_SOURCE_NONE;
+    session_override = meowkey_user_presence_has_session_override();
     return (size_t)snprintf(output,
                             output_capacity,
                             "{\n"
@@ -258,7 +264,17 @@ static size_t describe_user_presence(char *output, size_t output_capacity) {
                             "  \"gpioActiveLow\": %s,\n"
                             "  \"tapCount\": %u,\n"
                             "  \"gestureWindowMs\": %u,\n"
-                            "  \"requestTimeoutMs\": %u\n"
+                            "  \"requestTimeoutMs\": %u,\n"
+                            "  \"sessionOverride\": %s,\n"
+                            "  \"persisted\": {\n"
+                            "    \"enabled\": %s,\n"
+                            "    \"source\": \"%s\",\n"
+                            "    \"gpioPin\": %d,\n"
+                            "    \"gpioActiveLow\": %s,\n"
+                            "    \"tapCount\": %u,\n"
+                            "    \"gestureWindowMs\": %u,\n"
+                            "    \"requestTimeoutMs\": %u\n"
+                            "  }\n"
                             "}\n",
                             enabled ? "true" : "false",
                             user_presence_source_name(config.source),
@@ -266,7 +282,15 @@ static size_t describe_user_presence(char *output, size_t output_capacity) {
                             config.gpio_active_low != 0u ? "true" : "false",
                             config.tap_count,
                             (unsigned int)config.gesture_window_ms,
-                            (unsigned int)config.request_timeout_ms);
+                            (unsigned int)config.request_timeout_ms,
+                            session_override ? "true" : "false",
+                            persisted_enabled ? "true" : "false",
+                            user_presence_source_name(persisted_config.source),
+                            (int)persisted_config.gpio_pin,
+                            persisted_config.gpio_active_low != 0u ? "true" : "false",
+                            persisted_config.tap_count,
+                            (unsigned int)persisted_config.gesture_window_ms,
+                            (unsigned int)persisted_config.request_timeout_ms);
 }
 
 static bool parse_user_presence_payload(uint8_t const *payload,
@@ -490,6 +514,18 @@ static void handle_diagnostics(ctap_hid_interface_state_t *state,
         } else {
             response_length = describe_user_presence((char *)response, sizeof(response));
         }
+    } else if (action == 7u) {
+        meowkey_user_presence_config_t config;
+        if (!parse_user_presence_payload(payload, payload_length, &config)) {
+            response_length = (size_t)snprintf((char *)response, sizeof(response), "UP 会话配置载荷无效。\n");
+        } else if (!meowkey_user_presence_set_session_config(&config)) {
+            response_length = (size_t)snprintf((char *)response, sizeof(response), "UP 会话配置应用失败。\n");
+        } else {
+            response_length = describe_user_presence((char *)response, sizeof(response));
+        }
+    } else if (action == 8u) {
+        meowkey_user_presence_clear_session_config();
+        response_length = describe_user_presence((char *)response, sizeof(response));
 #if MEOWKEY_ENABLE_DANGEROUS_DEBUG_COMMANDS
     } else if (action == 3u) {
         if (meowkey_store_clear_credentials()) {

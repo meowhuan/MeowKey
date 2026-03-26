@@ -21,6 +21,8 @@ class ReleaseArtifact:
     usage: str
     binary_stem: str
     debug_hid_enabled: bool | None
+    secure_boot_signed: bool = False
+    anti_rollback_enabled: bool = False
     preset_name: str | None = None
     preset_package_label: str | None = None
     preset_description: str | None = None
@@ -134,6 +136,15 @@ def write_manifest(
         "presetPackageLabel": artifact.preset_package_label,
         "presetDescription": artifact.preset_description,
         "debugHidEnabled": artifact.debug_hid_enabled,
+        "secureBootSupported": True,
+        "secureBootSigned": artifact.secure_boot_signed,
+        "secureBootOtpHashIncluded": artifact.secure_boot_signed,
+        "antiRollbackEnabled": artifact.anti_rollback_enabled,
+        "antiRollbackVersion": (
+            version["major"] * 64 + version["minor"] * 8 + version["patch"]
+            if artifact.anti_rollback_enabled
+            else None
+        ),
         "version": version,
     }
     (package_dir / "manifest.json").write_text(
@@ -175,6 +186,10 @@ def package_artifact(
     if generated_header.exists():
         shutil.copy2(generated_header, package_dir / generated_header.name)
 
+    otp_json = build_dir / "meowkey.otp.json"
+    if otp_json.exists():
+        shutil.copy2(otp_json, package_dir / otp_json.name)
+
     copy_flash_scripts(repo_root, package_dir)
     write_manifest(package_dir, tag, version, artifact)
 
@@ -208,6 +223,7 @@ def main() -> None:
     parser.add_argument("--pico-sdk-path", required=True)
     parser.add_argument("--picotool-fetch-path", required=True)
     parser.add_argument("--dist-dir", default="dist")
+    parser.add_argument("--secure-boot-signing-key", default="")
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parent.parent
@@ -237,6 +253,19 @@ def main() -> None:
         "PICOTOOL_FETCH_FROM_GIT_PATH": args.picotool_fetch_path,
     }
 
+    secure_boot_defs = {}
+    secure_boot_enabled = False
+    if args.secure_boot_signing_key:
+        secure_boot_key_path = Path(args.secure_boot_signing_key)
+        if not secure_boot_key_path.exists():
+            raise FileNotFoundError(f"secure boot signing key not found: {secure_boot_key_path}")
+        secure_boot_enabled = True
+        secure_boot_defs = {
+            "MEOWKEY_ENABLE_SIGNED_BOOT": bool_to_cmake(True),
+            "MEOWKEY_ENABLE_ANTI_ROLLBACK": bool_to_cmake(True),
+            "MEOWKEY_SIGNING_KEY": str(secure_boot_key_path),
+        }
+
     configure_and_build(
         repo_root,
         "build-release-generic-debug",
@@ -256,6 +285,13 @@ def main() -> None:
         common_defs,
         {"MEOWKEY_ENABLE_DEBUG_HID": bool_to_cmake(False)},
     )
+    if secure_boot_enabled:
+        configure_and_build(
+            repo_root,
+            "build-release-generic-hardened-secure-boot-ready",
+            common_defs,
+            {"MEOWKEY_ENABLE_DEBUG_HID": bool_to_cmake(False)} | secure_boot_defs,
+        )
 
     presets = load_release_presets(repo_root / "scripts" / "board-presets.json")
     for preset in presets:
@@ -274,6 +310,13 @@ def main() -> None:
             common_defs,
             preset_defs | {"MEOWKEY_ENABLE_DEBUG_HID": bool_to_cmake(False)},
         )
+        if secure_boot_enabled:
+            configure_and_build(
+                repo_root,
+                f"build-release-preset-{package_label}-hardened-secure-boot-ready",
+                common_defs,
+                preset_defs | {"MEOWKEY_ENABLE_DEBUG_HID": bool_to_cmake(False)} | secure_boot_defs,
+            )
 
     artifacts = [
         ReleaseArtifact(
@@ -292,6 +335,16 @@ def main() -> None:
             binary_stem="meowkey",
             debug_hid_enabled=False,
         ),
+        ReleaseArtifact(
+            package_slug="generic-hardened-secure-boot-ready",
+            build_dir="build-release-generic-hardened-secure-boot-ready",
+            variant="hardened",
+            usage="generic",
+            binary_stem="meowkey",
+            debug_hid_enabled=False,
+            secure_boot_signed=True,
+            anti_rollback_enabled=True,
+        ) if secure_boot_enabled else None,
         ReleaseArtifact(
             package_slug="probe-board-id",
             build_dir="build-release-generic-debug",
@@ -331,9 +384,23 @@ def main() -> None:
                     preset_package_label=package_label,
                     preset_description=description,
                 ),
+                ReleaseArtifact(
+                    package_slug=f"preset-{package_label}-hardened-secure-boot-ready",
+                    build_dir=f"build-release-preset-{package_label}-hardened-secure-boot-ready",
+                    variant="hardened",
+                    usage=usage,
+                    binary_stem="meowkey",
+                    debug_hid_enabled=False,
+                    secure_boot_signed=True,
+                    anti_rollback_enabled=True,
+                    preset_name=preset_name,
+                    preset_package_label=package_label,
+                    preset_description=description,
+                ) if secure_boot_enabled else None,
             ]
         )
 
+    artifacts = [artifact for artifact in artifacts if artifact is not None]
     zip_paths = [package_artifact(repo_root, dist_dir, args.tag, version, artifact) for artifact in artifacts]
     write_checksum_manifest(dist_dir, zip_paths)
 

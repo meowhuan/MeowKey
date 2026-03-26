@@ -37,7 +37,11 @@ if (NOT "${MEOWKEY_FLASH_SIZE_BYTES}" STREQUAL "")
 endif()
 
 option(MEOWKEY_ENABLE_SIGNED_BOOT "Generate signed RP2350 images with a local key" OFF)
+option(MEOWKEY_ENABLE_ANTI_ROLLBACK "Embed an RP2350 rollback version in the signed image metadata" OFF)
 option(MEOWKEY_ENABLE_DEBUG_HID "Expose the development-only debug HID interface" ON)
+set(MEOWKEY_SIGNING_KEY "${CMAKE_CURRENT_LIST_DIR}/keys/meowkey-secureboot.pem" CACHE FILEPATH "PEM signing key for RP2350 secure boot")
+set(MEOWKEY_SECURE_BOOT_OTP_OUTPUT "" CACHE FILEPATH "Optional output path for the generated RP2350 OTP JSON material")
+set(MEOWKEY_ANTI_ROLLBACK_ROWS "0xc0;0xc3;0xc6;0xc9;0xcc;0xcf;0xd2;0xd5;0xd8;0xdb;0xde;0xe1" CACHE STRING "Project-default OTP rows reserved for the RP2350 anti-rollback thermometer counter")
 set(_MEOWKEY_DANGEROUS_DEBUG_DEFAULT ON)
 if (NOT MEOWKEY_ENABLE_DEBUG_HID)
     set(_MEOWKEY_DANGEROUS_DEBUG_DEFAULT OFF)
@@ -131,6 +135,18 @@ else()
     set(MEOWKEY_ENABLE_DEBUG_HID_INT 0)
 endif()
 
+if (MEOWKEY_ENABLE_SIGNED_BOOT)
+    set(MEOWKEY_ENABLE_SIGNED_BOOT_INT 1)
+else()
+    set(MEOWKEY_ENABLE_SIGNED_BOOT_INT 0)
+endif()
+
+if (MEOWKEY_ENABLE_ANTI_ROLLBACK)
+    set(MEOWKEY_ENABLE_ANTI_ROLLBACK_INT 1)
+else()
+    set(MEOWKEY_ENABLE_ANTI_ROLLBACK_INT 0)
+endif()
+
 if (MEOWKEY_ENABLE_DANGEROUS_DEBUG_COMMANDS)
     if (NOT MEOWKEY_ENABLE_DEBUG_HID)
         message(FATAL_ERROR "MEOWKEY_ENABLE_DANGEROUS_DEBUG_COMMANDS requires MEOWKEY_ENABLE_DEBUG_HID=ON")
@@ -138,6 +154,33 @@ if (MEOWKEY_ENABLE_DANGEROUS_DEBUG_COMMANDS)
     set(MEOWKEY_ENABLE_DANGEROUS_DEBUG_COMMANDS_INT 1)
 else()
     set(MEOWKEY_ENABLE_DANGEROUS_DEBUG_COMMANDS_INT 0)
+endif()
+
+if (MEOWKEY_ENABLE_ANTI_ROLLBACK AND NOT MEOWKEY_ENABLE_SIGNED_BOOT)
+    message(FATAL_ERROR "MEOWKEY_ENABLE_ANTI_ROLLBACK requires MEOWKEY_ENABLE_SIGNED_BOOT=ON")
+endif()
+
+if ((MEOWKEY_ENABLE_SIGNED_BOOT OR MEOWKEY_ENABLE_ANTI_ROLLBACK) AND PICO_NO_PICOTOOL)
+    message(FATAL_ERROR "Signed boot and anti-rollback require picotool; do not use PICO_NO_PICOTOOL=ON")
+endif()
+
+if (MEOWKEY_ENABLE_ANTI_ROLLBACK AND (MEOWKEY_VERSION_MINOR GREATER 7 OR MEOWKEY_VERSION_PATCH GREATER 7))
+    message(FATAL_ERROR "The compact anti-rollback encoding requires MEOWKEY_VERSION_MINOR and MEOWKEY_VERSION_PATCH to be <= 7")
+endif()
+
+math(EXPR MEOWKEY_ANTI_ROLLBACK_VERSION_VALUE
+    "(${MEOWKEY_VERSION_MAJOR} * 64) + (${MEOWKEY_VERSION_MINOR} * 8) + ${MEOWKEY_VERSION_PATCH}")
+
+if (MEOWKEY_ENABLE_ANTI_ROLLBACK)
+    set(MEOWKEY_ANTI_ROLLBACK_ROW_LIST ${MEOWKEY_ANTI_ROLLBACK_ROWS})
+    list(LENGTH MEOWKEY_ANTI_ROLLBACK_ROW_LIST MEOWKEY_ANTI_ROLLBACK_ROW_COUNT)
+    if (MEOWKEY_ANTI_ROLLBACK_ROW_COUNT LESS 1)
+        message(FATAL_ERROR "MEOWKEY_ANTI_ROLLBACK_ROWS must contain at least one OTP row when anti-rollback is enabled")
+    endif()
+    math(EXPR MEOWKEY_ANTI_ROLLBACK_MAX_VERSION "${MEOWKEY_ANTI_ROLLBACK_ROW_COUNT} * 24")
+    if (MEOWKEY_ANTI_ROLLBACK_VERSION_VALUE GREATER MEOWKEY_ANTI_ROLLBACK_MAX_VERSION)
+        message(FATAL_ERROR "MEOWKEY_ANTI_ROLLBACK_VERSION_VALUE=${MEOWKEY_ANTI_ROLLBACK_VERSION_VALUE} exceeds the configured rollback row capacity (${MEOWKEY_ANTI_ROLLBACK_ROW_COUNT} rows => ${MEOWKEY_ANTI_ROLLBACK_MAX_VERSION})")
+    endif()
 endif()
 
 string(TOLOWER "${MEOWKEY_UP_DEFAULT_SOURCE}" MEOWKEY_UP_DEFAULT_SOURCE_NORMALIZED)
@@ -206,6 +249,7 @@ add_executable(meowkey
     src/diagnostics.c
     src/main.c
     src/mbedtls_compat.c
+    src/security_status.c
     src/user_presence.c
     src/usb_descriptors.c
     src/webauthn.c
@@ -259,10 +303,19 @@ pico_set_program_name(meowkey "${MEOWKEY_PRODUCT_NAME}")
 pico_set_program_version(meowkey "${MEOWKEY_PROGRAM_VERSION}")
 pico_enable_stdio_uart(meowkey 0)
 pico_enable_stdio_usb(meowkey 0)
-pico_set_binary_version(meowkey
-    MAJOR ${MEOWKEY_VERSION_MAJOR}
-    MINOR ${MEOWKEY_VERSION_MINOR}
-)
+if (MEOWKEY_ENABLE_ANTI_ROLLBACK)
+    pico_set_binary_version(meowkey
+        MAJOR ${MEOWKEY_VERSION_MAJOR}
+        MINOR ${MEOWKEY_VERSION_MINOR}
+        ROLLBACK ${MEOWKEY_ANTI_ROLLBACK_VERSION_VALUE}
+        ROWS ${MEOWKEY_ANTI_ROLLBACK_ROWS}
+    )
+else()
+    pico_set_binary_version(meowkey
+        MAJOR ${MEOWKEY_VERSION_MAJOR}
+        MINOR ${MEOWKEY_VERSION_MINOR}
+    )
+endif()
 
 pico_set_program_name(meowkey_probe "MeowKey Probe")
 pico_set_program_version(meowkey_probe "${MEOWKEY_PROGRAM_VERSION}")
@@ -274,12 +327,15 @@ pico_set_binary_version(meowkey_probe
 )
 
 if (MEOWKEY_ENABLE_SIGNED_BOOT)
-    set(MEOWKEY_SIGNING_KEY "${CMAKE_CURRENT_LIST_DIR}/keys/meowkey-secureboot.pem")
     if (EXISTS "${MEOWKEY_SIGNING_KEY}")
-        pico_set_otp_key_output_file(meowkey "${CMAKE_CURRENT_BINARY_DIR}/meowkey.otp.json")
+        if ("${MEOWKEY_SECURE_BOOT_OTP_OUTPUT}" STREQUAL "")
+            pico_set_otp_key_output_file(meowkey "${CMAKE_CURRENT_BINARY_DIR}/meowkey.otp.json")
+        else()
+            pico_set_otp_key_output_file(meowkey "${MEOWKEY_SECURE_BOOT_OTP_OUTPUT}")
+        endif()
         pico_sign_binary(meowkey "${MEOWKEY_SIGNING_KEY}")
     else()
-        message(WARNING "MEOWKEY_ENABLE_SIGNED_BOOT is ON but keys/meowkey-secureboot.pem is missing; building an unsigned image")
+        message(FATAL_ERROR "MEOWKEY_ENABLE_SIGNED_BOOT is ON but MEOWKEY_SIGNING_KEY='${MEOWKEY_SIGNING_KEY}' was not found")
     endif()
 endif()
 
