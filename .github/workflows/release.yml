@@ -24,13 +24,18 @@ jobs:
       - name: Parse version
         run: |
           TAG="${RELEASE_TAG#v}"
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$TAG"
-          test -n "$MAJOR"
-          test -n "$MINOR"
-          test -n "$PATCH"
+          if [[ ! "$TAG" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-([0-9A-Za-z.-]+))?$ ]]; then
+            echo "Unsupported release tag: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+          MAJOR="${BASH_REMATCH[1]}"
+          MINOR="${BASH_REMATCH[2]}"
+          PATCH="${BASH_REMATCH[3]}"
+          LABEL="${BASH_REMATCH[5]}"
           echo "MEOWKEY_VERSION_MAJOR=$MAJOR" >> "$GITHUB_ENV"
           echo "MEOWKEY_VERSION_MINOR=$MINOR" >> "$GITHUB_ENV"
           echo "MEOWKEY_VERSION_PATCH=$PATCH" >> "$GITHUB_ENV"
+          echo "MEOWKEY_VERSION_LABEL=$LABEL" >> "$GITHUB_ENV"
 
       - name: Install firmware build dependencies
         run: |
@@ -48,6 +53,7 @@ jobs:
             --version-major "${MEOWKEY_VERSION_MAJOR}" \
             --version-minor "${MEOWKEY_VERSION_MINOR}" \
             --version-patch "${MEOWKEY_VERSION_PATCH}" \
+            --version-label "${MEOWKEY_VERSION_LABEL}" \
             --pico-sdk-path "${PICO_SDK_CI_PATH}" \
             --picotool-fetch-path "${PICOTOOL_FETCH_DIR}" \
             --dist-dir dist

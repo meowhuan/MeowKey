@@ -120,7 +120,7 @@ def ensure_clean_dir(path: Path) -> None:
 def write_manifest(
     package_dir: Path,
     tag: str,
-    version: dict[str, int],
+    version: dict[str, int | str],
     artifact: ReleaseArtifact,
 ) -> None:
     manifest = {
@@ -158,7 +158,7 @@ def package_artifact(
     repo_root: Path,
     dist_dir: Path,
     tag: str,
-    version: dict[str, int],
+    version: dict[str, int | str],
     artifact: ReleaseArtifact,
 ) -> Path:
     build_dir = repo_root / artifact.build_dir
@@ -204,6 +204,7 @@ def main() -> None:
     parser.add_argument("--version-major", required=True, type=int)
     parser.add_argument("--version-minor", required=True, type=int)
     parser.add_argument("--version-patch", required=True, type=int)
+    parser.add_argument("--version-label", default="")
     parser.add_argument("--pico-sdk-path", required=True)
     parser.add_argument("--picotool-fetch-path", required=True)
     parser.add_argument("--dist-dir", default="dist")
@@ -223,6 +224,8 @@ def main() -> None:
         "minor": args.version_minor,
         "patch": args.version_patch,
     }
+    if args.version_label:
+        version["label"] = args.version_label
 
     common_defs = {
         "PICO_BOARD": "meowkey_rp2350_usb",
@@ -230,7 +233,7 @@ def main() -> None:
         "MEOWKEY_VERSION_MAJOR": str(args.version_major),
         "MEOWKEY_VERSION_MINOR": str(args.version_minor),
         "MEOWKEY_VERSION_PATCH": str(args.version_patch),
-        "MEOWKEY_VERSION_LABEL": "",
+        "MEOWKEY_VERSION_LABEL": args.version_label,
         "PICOTOOL_FETCH_FROM_GIT_PATH": args.picotool_fetch_path,
     }
 

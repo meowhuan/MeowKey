@@ -40,6 +40,7 @@ enum {
     CTAP2_COSE_CRV_P256 = 1,
     MEOWKEY_PENDING_ASSERTION_MAX_CREDENTIALS = 128,
     MEOWKEY_PENDING_ASSERTION_TIMEOUT_MS = 30000u,
+    MEOWKEY_ASSERTION_UP_REUSE_WINDOW_MS = 1200u,
 };
 
 typedef struct {
@@ -99,12 +100,21 @@ typedef struct {
     uint32_t last_used_ms;
 } pending_assertion_state_t;
 
+typedef struct {
+    bool active;
+    uint8_t request_hash[32];
+    uint32_t granted_ms;
+} recent_assertion_up_state_t;
+
 static const uint8_t k_aaguid[16] = {
     0x4d, 0x65, 0x6f, 0x77, 0x4b, 0x65, 0x79, 0x00,
     0x52, 0x50, 0x32, 0x33, 0x35, 0x30, 0x00, 0x01,
 };
 
 static pending_assertion_state_t s_pending_assertion;
+static recent_assertion_up_state_t s_recent_assertion_up;
+
+static bool sha256_bytes(const uint8_t *data, size_t length, uint8_t output[32]);
 
 static int webauthn_random(void *context, unsigned char *output, size_t output_length) {
     (void)context;
@@ -120,6 +130,42 @@ static int webauthn_random(void *context, unsigned char *output, size_t output_l
 
 static void clear_pending_assertion(void) {
     memset(&s_pending_assertion, 0, sizeof(s_pending_assertion));
+}
+
+static void clear_recent_assertion_up(void) {
+    memset(&s_recent_assertion_up, 0, sizeof(s_recent_assertion_up));
+}
+
+static bool recent_assertion_up_is_current(void) {
+    if (!s_recent_assertion_up.active) {
+        return false;
+    }
+    if ((board_millis() - s_recent_assertion_up.granted_ms) > MEOWKEY_ASSERTION_UP_REUSE_WINDOW_MS) {
+        clear_recent_assertion_up();
+        return false;
+    }
+    return true;
+}
+
+static bool consume_recent_assertion_up_if_matching(const uint8_t request_hash[32]) {
+    if (!recent_assertion_up_is_current()) {
+        return false;
+    }
+    if (memcmp(s_recent_assertion_up.request_hash, request_hash, sizeof(s_recent_assertion_up.request_hash)) != 0) {
+        return false;
+    }
+
+    clear_recent_assertion_up();
+    meowkey_diag_logf("getAssertion reused recent UP");
+    return true;
+}
+
+static void arm_recent_assertion_up(const uint8_t request_hash[32]) {
+    s_recent_assertion_up.active = true;
+    memcpy(s_recent_assertion_up.request_hash, request_hash, sizeof(s_recent_assertion_up.request_hash));
+    s_recent_assertion_up.granted_ms = board_millis();
+    meowkey_diag_logf("getAssertion armed one-shot UP reuse windowMs=%u",
+                      (unsigned int)MEOWKEY_ASSERTION_UP_REUSE_WINDOW_MS);
 }
 
 static bool pending_assertion_is_current(void) {
@@ -1364,6 +1410,7 @@ uint8_t meowkey_webauthn_make_credential(const uint8_t *request,
         return status;
     }
     clear_pending_assertion();
+    clear_recent_assertion_up();
     status = meowkey_user_presence_wait_for_confirmation("makeCredential");
     if (status != CTAP2_STATUS_OK) {
         meowkey_diag_logf("makeCredential userPresence status=0x%02x", status);
@@ -1409,10 +1456,16 @@ uint8_t meowkey_webauthn_get_assertion(const uint8_t *request,
     uint32_t slot_index = 0u;
     uint32_t matching_slots[MEOWKEY_PENDING_ASSERTION_MAX_CREDENTIALS];
     uint32_t matching_count = 0u;
+    uint8_t request_hash[32];
+    bool reused_recent_up = false;
     uint8_t status;
 
     meowkey_store_init();
     clear_pending_assertion();
+    if (!sha256_bytes(request, request_length, request_hash)) {
+        meowkey_diag_logf("getAssertion request hash failed");
+        return CTAP2_ERR_INVALID_CBOR;
+    }
     status = parse_get_assertion_request(request, request_length, &parsed);
     if (status != CTAP2_STATUS_OK) {
         meowkey_diag_logf("getAssertion rejected status=0x%02x", status);
@@ -1433,12 +1486,19 @@ uint8_t meowkey_webauthn_get_assertion(const uint8_t *request,
             meowkey_diag_logf("getAssertion rpId mismatch");
             return CTAP2_ERR_INVALID_CREDENTIAL;
         }
-        status = meowkey_user_presence_wait_for_confirmation("getAssertion");
-        if (status != CTAP2_STATUS_OK) {
-            meowkey_diag_logf("getAssertion userPresence status=0x%02x", status);
-            return status;
+        reused_recent_up = consume_recent_assertion_up_if_matching(request_hash);
+        if (!reused_recent_up) {
+            status = meowkey_user_presence_wait_for_confirmation("getAssertion");
+            if (status != CTAP2_STATUS_OK) {
+                meowkey_diag_logf("getAssertion userPresence status=0x%02x", status);
+                return status;
+            }
         }
-        return respond_with_assertion(&parsed, slot_index, false, 0u, response, response_length);
+        status = respond_with_assertion(&parsed, slot_index, false, 0u, response, response_length);
+        if (status == CTAP2_STATUS_OK && !reused_recent_up) {
+            arm_recent_assertion_up(request_hash);
+        }
+        return status;
     }
 
     matching_count = collect_matching_slots(&parsed, matching_slots, MEOWKEY_PENDING_ASSERTION_MAX_CREDENTIALS);
@@ -1447,10 +1507,13 @@ uint8_t meowkey_webauthn_get_assertion(const uint8_t *request,
         return CTAP2_ERR_NO_CREDENTIALS;
     }
 
-    status = meowkey_user_presence_wait_for_confirmation("getAssertion");
-    if (status != CTAP2_STATUS_OK) {
-        meowkey_diag_logf("getAssertion userPresence status=0x%02x", status);
-        return status;
+    reused_recent_up = consume_recent_assertion_up_if_matching(request_hash);
+    if (!reused_recent_up) {
+        status = meowkey_user_presence_wait_for_confirmation("getAssertion");
+        if (status != CTAP2_STATUS_OK) {
+            meowkey_diag_logf("getAssertion userPresence status=0x%02x", status);
+            return status;
+        }
     }
     status = respond_with_assertion(&parsed,
                                     matching_slots[0],
@@ -1461,6 +1524,9 @@ uint8_t meowkey_webauthn_get_assertion(const uint8_t *request,
     if (status != CTAP2_STATUS_OK) {
         clear_pending_assertion();
         return status;
+    }
+    if (!reused_recent_up) {
+        arm_recent_assertion_up(request_hash);
     }
 
     if (matching_count > 1u) {

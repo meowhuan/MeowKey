@@ -93,14 +93,16 @@ GitHub Release 页面会直接附上全部 zip 包和这一份统一校验清单
 - `v0.1.0`
 - `v0.2.0`
 - `v0.2.1`
+- `v0.2.0-beta.2`
 
 工作流会把 tag 解析为：
 
 - `MEOWKEY_VERSION_MAJOR`
 - `MEOWKEY_VERSION_MINOR`
 - `MEOWKEY_VERSION_PATCH`
+- 可选的 `MEOWKEY_VERSION_LABEL`
 
-正式 release 不携带 `VersionLabel`。
+正式 release 可以不带 `VersionLabel`；预发布 tag 会自动把 `-beta.2` 这类后缀写入 `VersionLabel`。
 
 ## 6. 本地提交前建议
 
