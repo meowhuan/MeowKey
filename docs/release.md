@@ -103,6 +103,7 @@ GitHub Release 页面会直接附上全部 zip 包和这一份统一校验清单
 - 可选的 `MEOWKEY_VERSION_LABEL`
 
 正式 release 可以不带 `VersionLabel`；预发布 tag 会自动把 `-beta.2` 这类后缀写入 `VersionLabel`。
+同时，带后缀的 tag 也会在 GitHub Release 上自动标记为 `prerelease`；纯 `vX.Y.Z` 则继续作为正式 release 发布。
 
 ## 6. 本地提交前建议
 

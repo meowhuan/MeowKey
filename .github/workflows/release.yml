@@ -36,6 +36,11 @@ jobs:
           echo "MEOWKEY_VERSION_MINOR=$MINOR" >> "$GITHUB_ENV"
           echo "MEOWKEY_VERSION_PATCH=$PATCH" >> "$GITHUB_ENV"
           echo "MEOWKEY_VERSION_LABEL=$LABEL" >> "$GITHUB_ENV"
+          if [[ -n "$LABEL" ]]; then
+            echo "MEOWKEY_RELEASE_IS_PRERELEASE=true" >> "$GITHUB_ENV"
+          else
+            echo "MEOWKEY_RELEASE_IS_PRERELEASE=false" >> "$GITHUB_ENV"
+          fi
 
       - name: Install firmware build dependencies
         run: |
@@ -69,6 +74,7 @@ jobs:
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           generate_release_notes: true
+          prerelease: ${{ env.MEOWKEY_RELEASE_IS_PRERELEASE == 'true' }}
           files: |
             dist/*.zip
             dist/SHA256SUMS.txt
