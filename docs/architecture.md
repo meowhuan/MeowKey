@@ -94,8 +94,13 @@ USB 接收到 HID 输出报文后，流程是：
 
 - 所有已创建凭据都会被当作 discoverable credential 存储。
 - `getAssertion` 无 `allowList` 且命中多条 discoverable credential 时，会返回 `numberOfCredentials` 并允许继续走 `getNextAssertion`。
+- `makeCredential` 当前每次都会要求一次 UP，除非设备持久化配置已经把 UP 源切成 `none`。
+- `getAssertion` 当前也会要求 UP，但对“前一次成功断言后的同一语义重试”会开放一次 `1200ms` 的一次性复用窗口。
+- `getNextAssertion` 依赖前一次 `getAssertion` 留下的 pending state，不会再次要求新的 UP。
 - 当前已经支持可配置的 UP 源。
 - 对当前 `meowkey_rp2350_usb` 板卡，默认 UP 源已经切到 `BOOTSEL`；若后续有独立按键，仍建议再切到 GPIO。
+- 只要提供了合法 `pinUvAuthParam`，当前请求就会被标记为 `user_verified`，并影响返回的 UV bit 与 `hmac-secret` 派生路径。
+- `hmac-secret` 当前会在 `cred_random_with_uv` 和 `cred_random_without_uv` 之间切换。
 - attestation 仍固定为 `"none"`。
 
 ## 7. Client PIN
@@ -114,8 +119,10 @@ USB 接收到 HID 输出报文后，流程是：
 
 当前实现的几个边界：
 
+- 只支持 `pinUvAuthProtocol=1`。
 - `pinUvAuthToken` 是运行时令牌，不会持久化到 Flash。
-- `pinUvAuthToken` 现在是短生命周期令牌，超时后失效。
+- `pinUvAuthToken` 当前生命周期是 `30000ms`，超时后失效。
+- 每次 `getPinToken` 成功都会重新签发新 token。
 - `pinHash` 和重试计数仍持久化在 Flash。
 - token 权限范围没有实现，因此直接拒绝权限 token 子命令。
 - UP 配置已经有持久化接口，也预留了调试 HID 读写入口；桌面 UI 还没接上，但后续只需要对接现有 `DIAG 5/6`。
@@ -139,12 +146,14 @@ USB 接收到 HID 输出报文后，流程是：
 - `signCount`
 - PIN 哈希
 - PIN 重试计数
+- UP 配置
 
 当前存储层的现实限制：
 
 - 仍然没有磨损均衡。
 - 私钥与 PIN 哈希仍明文落在普通 Flash。
 - 主区已经改成带 `generation/crc` 的 A/B 事务提交，`signCount` journal 也会和主区代际绑定。
+- “清空凭据存储”当前只会清空 credential slots，不会清掉 PIN 状态和 UP 配置。
 - 这已经能扛掉电，但还不是量产级的 secure storage。
 
 ## 9. 板卡 ID
