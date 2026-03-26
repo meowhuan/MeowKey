@@ -102,7 +102,7 @@ typedef struct {
 
 typedef struct {
     bool active;
-    uint8_t request_hash[32];
+    uint8_t request_match_key[32];
     uint32_t granted_ms;
 } recent_assertion_up_state_t;
 
@@ -136,6 +136,27 @@ static void clear_recent_assertion_up(void) {
     memset(&s_recent_assertion_up, 0, sizeof(s_recent_assertion_up));
 }
 
+static size_t hex_prefix(const uint8_t *data, size_t length, char *output, size_t output_capacity) {
+    static const char k_hex[] = "0123456789abcdef";
+    size_t index;
+    size_t prefix_length = length < 8u ? length : 8u;
+
+    if (output_capacity == 0u) {
+        return 0u;
+    }
+
+    if ((prefix_length * 2u + 1u) > output_capacity) {
+        prefix_length = (output_capacity - 1u) / 2u;
+    }
+
+    for (index = 0; index < prefix_length; ++index) {
+        output[index * 2u] = k_hex[data[index] >> 4u];
+        output[index * 2u + 1u] = k_hex[data[index] & 0x0fu];
+    }
+    output[prefix_length * 2u] = '\0';
+    return prefix_length * 2u;
+}
+
 static bool recent_assertion_up_is_current(void) {
     if (!s_recent_assertion_up.active) {
         return false;
@@ -147,25 +168,60 @@ static bool recent_assertion_up_is_current(void) {
     return true;
 }
 
-static bool consume_recent_assertion_up_if_matching(const uint8_t request_hash[32]) {
-    if (!recent_assertion_up_is_current()) {
+// Match retries on the parsed request so semantically identical CBOR retries can reuse one UP.
+static bool get_assertion_retry_match_key(const get_assertion_request_t *request, uint8_t output[32]) {
+    return sha256_bytes((const uint8_t *)request, sizeof(*request), output);
+}
+
+static bool consume_recent_assertion_up_if_matching(const uint8_t request_match_key[32]) {
+    uint32_t age_ms;
+
+    if (!s_recent_assertion_up.active) {
+        meowkey_diag_logf("getAssertion recent UP unavailable reason=inactive");
         return false;
     }
-    if (memcmp(s_recent_assertion_up.request_hash, request_hash, sizeof(s_recent_assertion_up.request_hash)) != 0) {
+    age_ms = board_millis() - s_recent_assertion_up.granted_ms;
+    if (!recent_assertion_up_is_current()) {
+        meowkey_diag_logf("getAssertion recent UP unavailable reason=expired ageMs=%u windowMs=%u",
+                          (unsigned int)age_ms,
+                          (unsigned int)MEOWKEY_ASSERTION_UP_REUSE_WINDOW_MS);
+        return false;
+    }
+    if (memcmp(s_recent_assertion_up.request_match_key,
+               request_match_key,
+               sizeof(s_recent_assertion_up.request_match_key)) != 0) {
+        char current_prefix[17];
+        char requested_prefix[17];
+
+        (void)hex_prefix(s_recent_assertion_up.request_match_key,
+                         sizeof(s_recent_assertion_up.request_match_key),
+                         current_prefix,
+                         sizeof(current_prefix));
+        (void)hex_prefix(request_match_key, 32u, requested_prefix, sizeof(requested_prefix));
+        meowkey_diag_logf("getAssertion recent UP unavailable reason=retryKeyMismatch ageMs=%u current=%s requested=%s",
+                          (unsigned int)age_ms,
+                          current_prefix,
+                          requested_prefix);
         return false;
     }
 
     clear_recent_assertion_up();
-    meowkey_diag_logf("getAssertion reused recent UP");
+    meowkey_diag_logf("getAssertion reused recent UP ageMs=%u", (unsigned int)age_ms);
     return true;
 }
 
-static void arm_recent_assertion_up(const uint8_t request_hash[32]) {
+static void arm_recent_assertion_up(const uint8_t request_match_key[32]) {
+    char key_prefix[17];
+
     s_recent_assertion_up.active = true;
-    memcpy(s_recent_assertion_up.request_hash, request_hash, sizeof(s_recent_assertion_up.request_hash));
+    memcpy(s_recent_assertion_up.request_match_key,
+           request_match_key,
+           sizeof(s_recent_assertion_up.request_match_key));
     s_recent_assertion_up.granted_ms = board_millis();
-    meowkey_diag_logf("getAssertion armed one-shot UP reuse windowMs=%u",
-                      (unsigned int)MEOWKEY_ASSERTION_UP_REUSE_WINDOW_MS);
+    (void)hex_prefix(request_match_key, 32u, key_prefix, sizeof(key_prefix));
+    meowkey_diag_logf("getAssertion armed one-shot UP reuse windowMs=%u key=%s",
+                      (unsigned int)MEOWKEY_ASSERTION_UP_REUSE_WINDOW_MS,
+                      key_prefix);
 }
 
 static bool pending_assertion_is_current(void) {
@@ -1456,20 +1512,20 @@ uint8_t meowkey_webauthn_get_assertion(const uint8_t *request,
     uint32_t slot_index = 0u;
     uint32_t matching_slots[MEOWKEY_PENDING_ASSERTION_MAX_CREDENTIALS];
     uint32_t matching_count = 0u;
-    uint8_t request_hash[32];
+    uint8_t request_match_key[32];
     bool reused_recent_up = false;
     uint8_t status;
 
     meowkey_store_init();
     clear_pending_assertion();
-    if (!sha256_bytes(request, request_length, request_hash)) {
-        meowkey_diag_logf("getAssertion request hash failed");
-        return CTAP2_ERR_INVALID_CBOR;
-    }
     status = parse_get_assertion_request(request, request_length, &parsed);
     if (status != CTAP2_STATUS_OK) {
         meowkey_diag_logf("getAssertion rejected status=0x%02x", status);
         return status;
+    }
+    if (!get_assertion_retry_match_key(&parsed, request_match_key)) {
+        meowkey_diag_logf("getAssertion retry key failed");
+        return CTAP2_ERR_INVALID_CBOR;
     }
 
     if (parsed.has_allow_credential) {
@@ -1486,7 +1542,7 @@ uint8_t meowkey_webauthn_get_assertion(const uint8_t *request,
             meowkey_diag_logf("getAssertion rpId mismatch");
             return CTAP2_ERR_INVALID_CREDENTIAL;
         }
-        reused_recent_up = consume_recent_assertion_up_if_matching(request_hash);
+        reused_recent_up = consume_recent_assertion_up_if_matching(request_match_key);
         if (!reused_recent_up) {
             status = meowkey_user_presence_wait_for_confirmation("getAssertion");
             if (status != CTAP2_STATUS_OK) {
@@ -1496,7 +1552,7 @@ uint8_t meowkey_webauthn_get_assertion(const uint8_t *request,
         }
         status = respond_with_assertion(&parsed, slot_index, false, 0u, response, response_length);
         if (status == CTAP2_STATUS_OK && !reused_recent_up) {
-            arm_recent_assertion_up(request_hash);
+            arm_recent_assertion_up(request_match_key);
         }
         return status;
     }
@@ -1507,7 +1563,7 @@ uint8_t meowkey_webauthn_get_assertion(const uint8_t *request,
         return CTAP2_ERR_NO_CREDENTIALS;
     }
 
-    reused_recent_up = consume_recent_assertion_up_if_matching(request_hash);
+    reused_recent_up = consume_recent_assertion_up_if_matching(request_match_key);
     if (!reused_recent_up) {
         status = meowkey_user_presence_wait_for_confirmation("getAssertion");
         if (status != CTAP2_STATUS_OK) {
@@ -1526,7 +1582,7 @@ uint8_t meowkey_webauthn_get_assertion(const uint8_t *request,
         return status;
     }
     if (!reused_recent_up) {
-        arm_recent_assertion_up(request_hash);
+        arm_recent_assertion_up(request_match_key);
     }
 
     if (matching_count > 1u) {
