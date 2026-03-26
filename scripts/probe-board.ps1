@@ -200,6 +200,68 @@ function Resolve-I2cCandidate {
     }
 }
 
+function Resolve-UserPresenceDraft {
+    param(
+        $Report,
+        [System.Collections.Generic.List[string]]$Notes
+    )
+
+    $candidates = @()
+    if ($Report.PSObject.Properties.Name -contains "userPresence" -and
+        $Report.userPresence -and
+        $Report.userPresence.PSObject.Properties.Name -contains "gpioButtonCandidates") {
+        $candidates = @($Report.userPresence.gpioButtonCandidates)
+    }
+    if ($candidates.Count -gt 0) {
+        $candidateSummary = ($candidates | ForEach-Object {
+            "GPIO $($_.pin) active-$($_.activeState)"
+        }) -join ", "
+        $Notes.Add("Potential UP button GPIO candidates were observed: $candidateSummary. The draft preset keeps userPresenceSource=none until you manually confirm a dedicated button.")
+    } else {
+        $Notes.Add("No dedicated UP button GPIO transitions were observed during the probe window. The draft preset keeps userPresenceSource=none.")
+    }
+
+    return [ordered]@{
+        source = "none"
+        gpioPin = -1
+        gpioActiveState = "low"
+        tapCount = 2
+        gestureWindowMs = 750
+        timeoutMs = 8000
+    }
+}
+
+function Resolve-UserVerificationDraft {
+    param(
+        $Report,
+        [System.Collections.Generic.List[string]]$Notes
+    )
+
+    $candidates = @()
+    if ($Report.PSObject.Properties.Name -contains "userVerification" -and
+        $Report.userVerification -and
+        $Report.userVerification.PSObject.Properties.Name -contains "i2cCandidates") {
+        $candidates = @($Report.userVerification.i2cCandidates)
+    }
+    if ($candidates.Count -gt 0) {
+        $candidateSummary = ($candidates | ForEach-Object {
+            "I2C$($_.instance) $($_.sdaPin)/$($_.sclPin) @$($_.address)"
+        }) -join ", "
+        $Notes.Add("Potential UV-related external peripherals were observed on I2C: $candidateSummary. This is only a heuristic; the draft preset keeps userVerificationSource=none until you manually confirm the module.")
+    } else {
+        $Notes.Add("No UV peripheral candidates were inferred automatically. The draft preset keeps userVerificationSource=none.")
+    }
+
+    return [ordered]@{
+        source = "none"
+        module = ""
+        i2cInstance = -1
+        i2cSdaPin = -1
+        i2cSclPin = -1
+        i2cAddress = ""
+    }
+}
+
 function Resolve-PresetDraft {
     param($Report)
 
@@ -207,6 +269,8 @@ function Resolve-PresetDraft {
     $forcedPins = @(Get-ForcedPinsFromReport -Report $Report)
     $selectedGpioPins = @(Parse-GpioPins -PinsText $BoardIdGpioPins)
     $selectedI2c = Resolve-I2cCandidate -Report $Report -Notes $notes
+    $userPresence = Resolve-UserPresenceDraft -Report $Report -Notes $notes
+    $userVerification = Resolve-UserVerificationDraft -Report $Report -Notes $notes
     $resolvedMode = $BoardIdMode
 
     if ($selectedGpioPins.Count -eq 0 -and $forcedPins.Count -gt 0) {
@@ -249,6 +313,18 @@ function Resolve-PresetDraft {
         flashSizeMB = $FlashSizeMB
         credentialCapacity = $CredentialCapacity
         credentialStoreKB = $CredentialStoreKB
+        userPresenceSource = [string]$userPresence.source
+        userPresenceGpioPin = [int]$userPresence.gpioPin
+        userPresenceGpioActiveState = [string]$userPresence.gpioActiveState
+        userPresenceTapCount = [int]$userPresence.tapCount
+        userPresenceGestureWindowMs = [int]$userPresence.gestureWindowMs
+        userPresenceTimeoutMs = [int]$userPresence.timeoutMs
+        userVerificationSource = [string]$userVerification.source
+        userVerificationModule = [string]$userVerification.module
+        userVerificationI2cInstance = [int]$userVerification.i2cInstance
+        userVerificationI2cSdaPin = [int]$userVerification.i2cSdaPin
+        userVerificationI2cSclPin = [int]$userVerification.i2cSclPin
+        userVerificationI2cAddress = [string]$userVerification.i2cAddress
         boardIdMode = $resolvedMode
         boardIdGpioPins = ""
         boardIdGpioActiveState = $BoardIdGpioActiveState

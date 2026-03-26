@@ -122,6 +122,11 @@ Rust 管理器依赖 Debug HID。若固件使用 `-DisableDebugHid` 构建，它
 powershell -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1
 ```
 
+新版 probe 报告除了板卡 ID 候选，也会额外给出：
+
+- 可手工复核的 GPIO `UP` 按键候选
+- 可手工复核的 `UV` 外设候选（当前主要是启发式 I2C 候选，不会自动启用）
+
 如果自动探测不到正确串口，可以手工指定：
 
 ```powershell

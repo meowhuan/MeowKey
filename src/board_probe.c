@@ -16,9 +16,13 @@ enum {
     PROBE_GPIO_SAMPLE_DELAY_US = 50,
     PROBE_I2C_TIMEOUT_US = 1000,
     PROBE_I2C_EEPROM_SAMPLE_LENGTH = 8,
-    PROBE_I2C_HEADER_SCHEMA_VERSION = 1,
+    PROBE_I2C_HEADER_SCHEMA_VERSION = 2,
     PROBE_I2C_MAX_DEVICES_PER_PAIR = 16,
     PROBE_I2C_MAX_EEPROM_CANDIDATES = 16,
+    PROBE_USER_PRESENCE_OBSERVATION_WINDOW_MS = 1200,
+    PROBE_USER_PRESENCE_SAMPLE_INTERVAL_MS = 20,
+    PROBE_USER_PRESENCE_MAX_CANDIDATES = 8,
+    PROBE_USER_VERIFICATION_MAX_CANDIDATES = 16,
 };
 
 typedef struct {
@@ -49,6 +53,21 @@ typedef struct {
     uint8_t raw[PROBE_I2C_EEPROM_SAMPLE_LENGTH];
     size_t raw_length;
 } i2c_eeprom_candidate_t;
+
+typedef struct {
+    uint8_t pin;
+    bool have_active_low;
+    bool active_low;
+    bool ambiguous_active_state;
+    uint16_t transitions;
+} user_presence_candidate_t;
+
+typedef struct {
+    i2c_pin_pair_t pair;
+    uint8_t address;
+    const char *hint;
+    const char *confidence;
+} user_verification_candidate_t;
 
 static const i2c_pin_pair_t k_i2c_pairs[] = {
     {0u, 0u, 1u},
@@ -101,6 +120,14 @@ static const char *gpio_classification(const gpio_pin_probe_t *probe) {
     return "unstable";
 }
 
+static bool gpio_is_switchable(const gpio_pin_probe_t *probe) {
+    return probe->pull_up_level && !probe->pull_down_level;
+}
+
+static uint32_t probe_now_ms(void) {
+    return to_ms_since_boot(get_absolute_time());
+}
+
 static void sample_gpio_pin(uint8_t pin, gpio_pin_probe_t *probe) {
     gpio_init(pin);
     gpio_set_dir(pin, GPIO_IN);
@@ -119,6 +146,104 @@ static void sample_gpio_pin(uint8_t pin, gpio_pin_probe_t *probe) {
     probe->pull_down_level = gpio_get(pin);
 
     gpio_disable_pulls(pin);
+}
+
+static void observe_gpio_button_phase(const gpio_pin_probe_t probes[PROBE_GPIO_PIN_COUNT],
+                                      bool active_low,
+                                      user_presence_candidate_t *candidates,
+                                      size_t *candidate_count) {
+    bool enabled[PROBE_GPIO_PIN_COUNT] = {0};
+    bool last_level[PROBE_GPIO_PIN_COUNT] = {0};
+    bool saw_low[PROBE_GPIO_PIN_COUNT] = {0};
+    bool saw_high[PROBE_GPIO_PIN_COUNT] = {0};
+    uint16_t transitions[PROBE_GPIO_PIN_COUNT] = {0};
+    uint32_t start_ms;
+    size_t index;
+
+    for (index = 0u; index < PROBE_GPIO_PIN_COUNT; ++index) {
+        if (!gpio_is_switchable(&probes[index])) {
+            continue;
+        }
+
+        enabled[index] = true;
+        gpio_init((uint)probes[index].pin);
+        gpio_set_dir((uint)probes[index].pin, GPIO_IN);
+        gpio_disable_pulls((uint)probes[index].pin);
+        if (active_low) {
+            gpio_pull_up((uint)probes[index].pin);
+        } else {
+            gpio_pull_down((uint)probes[index].pin);
+        }
+    }
+
+    sleep_ms(10u);
+    for (index = 0u; index < PROBE_GPIO_PIN_COUNT; ++index) {
+        bool level;
+        if (!enabled[index]) {
+            continue;
+        }
+
+        level = gpio_get((uint)probes[index].pin);
+        last_level[index] = level;
+        saw_low[index] = !level;
+        saw_high[index] = level;
+    }
+
+    start_ms = probe_now_ms();
+    while ((probe_now_ms() - start_ms) < PROBE_USER_PRESENCE_OBSERVATION_WINDOW_MS) {
+        for (index = 0u; index < PROBE_GPIO_PIN_COUNT; ++index) {
+            bool level;
+            if (!enabled[index]) {
+                continue;
+            }
+
+            level = gpio_get((uint)probes[index].pin);
+            if (level != last_level[index]) {
+                transitions[index] += 1u;
+                last_level[index] = level;
+            }
+            saw_low[index] = saw_low[index] || !level;
+            saw_high[index] = saw_high[index] || level;
+        }
+        sleep_ms(PROBE_USER_PRESENCE_SAMPLE_INTERVAL_MS);
+    }
+
+    for (index = 0u; index < PROBE_GPIO_PIN_COUNT; ++index) {
+        size_t candidate_index;
+        if (!enabled[index]) {
+            continue;
+        }
+
+        gpio_disable_pulls((uint)probes[index].pin);
+        if (!(saw_low[index] && saw_high[index]) || transitions[index] == 0u) {
+            continue;
+        }
+
+        for (candidate_index = 0u; candidate_index < *candidate_count; ++candidate_index) {
+            if (candidates[candidate_index].pin == probes[index].pin) {
+                if (candidates[candidate_index].have_active_low &&
+                    candidates[candidate_index].active_low != active_low) {
+                    candidates[candidate_index].ambiguous_active_state = true;
+                } else {
+                    candidates[candidate_index].have_active_low = true;
+                    candidates[candidate_index].active_low = active_low;
+                }
+                if (transitions[index] > candidates[candidate_index].transitions) {
+                    candidates[candidate_index].transitions = transitions[index];
+                }
+                break;
+            }
+        }
+
+        if (candidate_index >= *candidate_count && *candidate_count < PROBE_USER_PRESENCE_MAX_CANDIDATES) {
+            candidates[*candidate_count].pin = probes[index].pin;
+            candidates[*candidate_count].have_active_low = true;
+            candidates[*candidate_count].active_low = active_low;
+            candidates[*candidate_count].ambiguous_active_state = false;
+            candidates[*candidate_count].transitions = transitions[index];
+            *candidate_count += 1u;
+        }
+    }
 }
 
 static bool i2c_probe_address(i2c_inst_t *i2c, uint8_t address) {
@@ -239,15 +364,9 @@ static void scan_i2c_pair(const i2c_pin_pair_t *pair,
     reset_i2c_pair(pair);
 }
 
-static void emit_gpio_report(void) {
-    gpio_pin_probe_t probes[PROBE_GPIO_PIN_COUNT];
+static void emit_gpio_report(const gpio_pin_probe_t probes[PROBE_GPIO_PIN_COUNT]) {
     size_t index;
     bool first_forced_pin = true;
-
-    for (index = 0u; index < PROBE_GPIO_PIN_COUNT; ++index) {
-        probes[index].pin = (uint8_t)index;
-        sample_gpio_pin((uint8_t)index, &probes[index]);
-    }
 
     printf("  \"gpio\": {\n");
     printf("    \"pinCount\": %u,\n", PROBE_GPIO_PIN_COUNT);
@@ -276,6 +395,35 @@ static void emit_gpio_report(void) {
     printf("  }");
 }
 
+static void emit_user_presence_report(const gpio_pin_probe_t probes[PROBE_GPIO_PIN_COUNT]) {
+    user_presence_candidate_t candidates[PROBE_USER_PRESENCE_MAX_CANDIDATES];
+    size_t candidate_count = 0u;
+    size_t index;
+
+    memset(candidates, 0, sizeof(candidates));
+    observe_gpio_button_phase(probes, true, candidates, &candidate_count);
+    observe_gpio_button_phase(probes, false, candidates, &candidate_count);
+
+    printf("  \"userPresence\": {\n");
+    printf("    \"observationWindowMs\": %u,\n", PROBE_USER_PRESENCE_OBSERVATION_WINDOW_MS);
+    printf("    \"sampleIntervalMs\": %u,\n", PROBE_USER_PRESENCE_SAMPLE_INTERVAL_MS);
+    printf("    \"gpioButtonCandidates\": [\n");
+    for (index = 0u; index < candidate_count; ++index) {
+        const char *active_state = candidates[index].ambiguous_active_state
+            ? "ambiguous"
+            : (candidates[index].active_low ? "low" : "high");
+        const char *confidence = candidates[index].ambiguous_active_state ? "low" : "medium";
+        printf("      {\"pin\": %u, \"activeState\": \"%s\", \"transitions\": %u, \"confidence\": \"%s\"}%s\n",
+               candidates[index].pin,
+               active_state,
+               candidates[index].transitions,
+               confidence,
+               index + 1u == candidate_count ? "" : ",");
+    }
+    printf("    ]\n");
+    printf("  }");
+}
+
 static const char *suggested_preset_label(const i2c_eeprom_candidate_t *candidate) {
     if (candidate->address_width == 1u) {
         return "24c02";
@@ -283,14 +431,65 @@ static const char *suggested_preset_label(const i2c_eeprom_candidate_t *candidat
     return "custom";
 }
 
+static bool i2c_address_is_eeprom_candidate(const i2c_pin_pair_t *pair,
+                                            uint8_t address,
+                                            const i2c_eeprom_candidate_t *candidates,
+                                            size_t candidate_count) {
+    size_t index;
+
+    for (index = 0u; index < candidate_count; ++index) {
+        if (candidates[index].pair.instance == pair->instance &&
+            candidates[index].pair.sda_pin == pair->sda_pin &&
+            candidates[index].pair.scl_pin == pair->scl_pin &&
+            candidates[index].address == address) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void collect_user_verification_candidates(const i2c_pair_probe_t *pair_probes,
+                                                 size_t pair_probe_count,
+                                                 const i2c_eeprom_candidate_t *eeprom_candidates,
+                                                 size_t eeprom_candidate_count,
+                                                 user_verification_candidate_t *uv_candidates,
+                                                 size_t *uv_candidate_count) {
+    size_t pair_index;
+
+    for (pair_index = 0u; pair_index < pair_probe_count; ++pair_index) {
+        size_t device_index;
+        for (device_index = 0u; device_index < pair_probes[pair_index].device_count; ++device_index) {
+            uint8_t address = pair_probes[pair_index].devices[device_index];
+            if (*uv_candidate_count >= PROBE_USER_VERIFICATION_MAX_CANDIDATES) {
+                return;
+            }
+            if (i2c_address_is_eeprom_candidate(&pair_probes[pair_index].pair,
+                                                address,
+                                                eeprom_candidates,
+                                                eeprom_candidate_count)) {
+                continue;
+            }
+
+            uv_candidates[*uv_candidate_count].pair = pair_probes[pair_index].pair;
+            uv_candidates[*uv_candidate_count].address = address;
+            uv_candidates[*uv_candidate_count].hint = "manual-review-non-eeprom-i2c-device";
+            uv_candidates[*uv_candidate_count].confidence = "low";
+            *uv_candidate_count += 1u;
+        }
+    }
+}
+
 static void emit_i2c_report(void) {
     i2c_pair_probe_t pair_probes[sizeof(k_i2c_pairs) / sizeof(k_i2c_pairs[0])];
     i2c_eeprom_candidate_t candidates[PROBE_I2C_MAX_EEPROM_CANDIDATES];
+    user_verification_candidate_t uv_candidates[PROBE_USER_VERIFICATION_MAX_CANDIDATES];
     size_t pair_index;
     size_t candidate_count = 0u;
+    size_t uv_candidate_count = 0u;
 
     memset(pair_probes, 0, sizeof(pair_probes));
     memset(candidates, 0, sizeof(candidates));
+    memset(uv_candidates, 0, sizeof(uv_candidates));
 
     for (pair_index = 0u; pair_index < (sizeof(k_i2c_pairs) / sizeof(k_i2c_pairs[0])); ++pair_index) {
         scan_i2c_pair(&k_i2c_pairs[pair_index], &pair_probes[pair_index], candidates, &candidate_count);
@@ -331,12 +530,41 @@ static void emit_i2c_report(void) {
     }
     printf("    ]\n");
     printf("  }\n");
+
+    collect_user_verification_candidates(pair_probes,
+                                         sizeof(k_i2c_pairs) / sizeof(k_i2c_pairs[0]),
+                                         candidates,
+                                         candidate_count,
+                                         uv_candidates,
+                                         &uv_candidate_count);
+
+    printf("  ,\"userVerification\": {\n");
+    printf("    \"probeMethod\": \"heuristic-non-eeprom-i2c-review\",\n");
+    printf("    \"i2cCandidates\": [\n");
+    for (pair_index = 0u; pair_index < uv_candidate_count; ++pair_index) {
+        printf("      {\"instance\": %u, \"sdaPin\": %u, \"sclPin\": %u, \"address\": \"0x%02x\", \"hint\": \"%s\", \"confidence\": \"%s\"}%s\n",
+               uv_candidates[pair_index].pair.instance,
+               uv_candidates[pair_index].pair.sda_pin,
+               uv_candidates[pair_index].pair.scl_pin,
+               uv_candidates[pair_index].address,
+               uv_candidates[pair_index].hint,
+               uv_candidates[pair_index].confidence,
+               pair_index + 1u == uv_candidate_count ? "" : ",");
+    }
+    printf("    ]\n");
+    printf("  }\n");
 }
 
 void meowkey_board_probe_emit_report(void) {
     char unique_id[2 * PICO_UNIQUE_BOARD_ID_SIZE_BYTES + 1u];
+    gpio_pin_probe_t gpio_probes[PROBE_GPIO_PIN_COUNT];
+    size_t index;
 
     pico_get_unique_board_id_string(unique_id, sizeof(unique_id));
+    for (index = 0u; index < PROBE_GPIO_PIN_COUNT; ++index) {
+        gpio_probes[index].pin = (uint8_t)index;
+        sample_gpio_pin((uint8_t)index, &gpio_probes[index]);
+    }
 
     printf("MEOWKEY_PROBE_JSON_BEGIN\n");
     printf("{\n");
@@ -344,7 +572,9 @@ void meowkey_board_probe_emit_report(void) {
     printf("  \"tool\": \"meowkey-probe\",\n");
     printf("  \"uniqueId\": \"%s\",\n", unique_id);
     printf("  \"flashSizeBytes\": %u,\n", (unsigned int)PICO_FLASH_SIZE_BYTES);
-    emit_gpio_report();
+    emit_gpio_report(gpio_probes);
+    printf(",\n");
+    emit_user_presence_report(gpio_probes);
     printf(",\n");
     emit_i2c_report();
     printf("}\n");

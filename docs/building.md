@@ -185,6 +185,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1 -OutputPath .
 - 选择该草案的备注说明
 - 原始 probe 报告
 
+新版 probe 报告还会包含两类启发式候选：
+
+- `userPresence.gpioButtonCandidates`
+  观察窗口内检测到的额外 GPIO 按键候选，用于后续人工确认是否可绑定为真实 UP。
+- `userVerification.i2cCandidates`
+  非 EEPROM 的 I2C 外设候选，用于后续人工确认是否存在可接入的 UV 模块。
+
 ## 8. 常见问题
 
 ### 8.1 为什么没有 `UF2`
