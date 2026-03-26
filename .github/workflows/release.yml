@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       PICOTOOL_FETCH_DIR: ${{ github.workspace }}/.cache/picotool-release
+      PICO_SDK_CI_PATH: ${{ runner.temp }}/pico-sdk
     steps:
       - uses: actions/checkout@v4
 
@@ -45,10 +46,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi ninja-build zip
 
+      - name: Fetch pico-sdk 2.2.0
+        run: |
+          git clone --branch 2.2.0 --depth 1 --recurse-submodules --shallow-submodules https://github.com/raspberrypi/pico-sdk.git "${PICO_SDK_CI_PATH}"
+
       - name: Build release firmware (debug)
         run: |
           cmake -S . -B build-release-debug -G Ninja \
             -DPICO_BOARD=meowkey_rp2350_usb \
+            -DPICO_SDK_PATH="${PICO_SDK_CI_PATH}" \
             -DMEOWKEY_VERSION_MAJOR=${MEOWKEY_VERSION_MAJOR} \
             -DMEOWKEY_VERSION_MINOR=${MEOWKEY_VERSION_MINOR} \
             -DMEOWKEY_VERSION_PATCH=${MEOWKEY_VERSION_PATCH} \
@@ -64,6 +70,7 @@ jobs:
         run: |
           cmake -S . -B build-release-hardened -G Ninja \
             -DPICO_BOARD=meowkey_rp2350_usb \
+            -DPICO_SDK_PATH="${PICO_SDK_CI_PATH}" \
             -DMEOWKEY_VERSION_MAJOR=${MEOWKEY_VERSION_MAJOR} \
             -DMEOWKEY_VERSION_MINOR=${MEOWKEY_VERSION_MINOR} \
             -DMEOWKEY_VERSION_PATCH=${MEOWKEY_VERSION_PATCH} \

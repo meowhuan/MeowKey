@@ -13,6 +13,8 @@ permissions:
 jobs:
   firmware:
     runs-on: ubuntu-24.04
+    env:
+      PICO_SDK_CI_PATH: ${{ runner.temp }}/pico-sdk
     steps:
       - uses: actions/checkout@v4
 
@@ -20,6 +22,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi ninja-build
+
+      - name: Fetch pico-sdk 2.2.0
+        run: |
+          git clone --branch 2.2.0 --depth 1 --recurse-submodules --shallow-submodules https://github.com/raspberrypi/pico-sdk.git "${PICO_SDK_CI_PATH}"
 
       - name: Validate repository metadata
         run: |
@@ -30,6 +36,7 @@ jobs:
         run: |
           cmake -S . -B build-ci -G Ninja \
             -DPICO_BOARD=meowkey_rp2350_usb \
+            -DPICO_SDK_PATH="${PICO_SDK_CI_PATH}" \
             -DPICO_NO_PICOTOOL=ON \
             -DMEOWKEY_VERSION_LABEL=ci
           cmake --build build-ci --parallel
@@ -38,6 +45,7 @@ jobs:
         run: |
           cmake -S . -B build-ci-hardened -G Ninja \
             -DPICO_BOARD=meowkey_rp2350_usb \
+            -DPICO_SDK_PATH="${PICO_SDK_CI_PATH}" \
             -DPICO_NO_PICOTOOL=ON \
             -DMEOWKEY_ENABLE_DEBUG_HID=OFF \
             -DMEOWKEY_VERSION_LABEL=ci

@@ -176,4 +176,4 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -BuildDir build -Ig
 
 ### 8.3 为什么 CI 不直接复用仓库里的 `tools/`
 
-`tools/` 默认被 `.gitignore` 忽略，不应假定它存在于远端仓库。GitHub Actions 使用系统安装的 `arm-none-eabi-gcc` 和 `ninja`。
+`tools/` 默认被 `.gitignore` 忽略，不应假定它存在于远端仓库。GitHub Actions 使用系统安装的 `arm-none-eabi-gcc` 和 `ninja`，并在 workflow 中显式拉取 `pico-sdk` 2.2.0，再通过 `-DPICO_SDK_PATH=...` 覆盖本地默认路径。

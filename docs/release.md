@@ -15,6 +15,7 @@ GitHub Actions 的 `ci.yml` 会做两类检查。
 - `probe` 固件离线构建
 
 这里使用系统安装的 `arm-none-eabi-gcc`、`cmake` 和 `ninja`，不依赖本地 `tools/`。
+同时会在 workflow 里显式拉取 `pico-sdk` `2.2.0` 及其子模块，不依赖仓库里是否包含 `third_party/pico-sdk`。
 
 ### 1.2 桌面工具检查
 
@@ -30,7 +31,7 @@ GitHub Actions 的 `ci.yml` 会做两类检查。
 
 - `build.ps1` 偏向本地 Windows 开发环境
 - 仓库默认并不假设 `tools/` 会被提交到远端
-- GitHub Actions 更适合直接安装系统交叉编译器后跑 CMake
+- GitHub Actions 更适合直接安装系统交叉编译器、拉取 `pico-sdk`，再通过 `-DPICO_SDK_PATH` 跑 CMake
 
 本地开发仍然推荐用 `build.ps1`。
 
