@@ -28,6 +28,8 @@ python -c "import py_compile; py_compile.compile(r'$guiServerPath', doraise=True
 
 Write-Host "[check] validating probe-board.ps1 with sample input"
 $probeSamplePath = Join-Path ([System.IO.Path]::GetTempPath()) "meowkey_probe_sample.json"
+$probeTextPath = Join-Path ([System.IO.Path]::GetTempPath()) "meowkey_probe_sample.txt"
+$probeBundlePath = Join-Path ([System.IO.Path]::GetTempPath()) "meowkey_probe_bundle.json"
 @'
 {
   "schemaVersion": 1,
@@ -52,7 +54,29 @@ $probeSamplePath = Join-Path ([System.IO.Path]::GetTempPath()) "meowkey_probe_sa
   }
 }
 '@ | Set-Content -Path $probeSamplePath -Encoding utf8
-powershell -NoProfile -ExecutionPolicy Bypass -File $probeScriptPath -InputPath $probeSamplePath | Out-Null
+powershell -NoProfile -ExecutionPolicy Bypass -File $probeScriptPath `
+    -InputPath $probeSamplePath `
+    -TextOutputPath $probeTextPath `
+    -OutputPath $probeBundlePath | Out-Null
+
+if (-not (Test-Path $probeTextPath)) {
+    throw "probe-board.ps1 did not create the expected text report."
+}
+
+$probeText = Get-Content -Path $probeTextPath -Raw
+if ($probeText -notmatch "=== Suggested preset snippet ===" -or
+    $probeText -notmatch "=== Raw probe report ===") {
+    throw "probe-board.ps1 text report is missing expected sections."
+}
+
+if (-not (Test-Path $probeBundlePath)) {
+    throw "probe-board.ps1 did not create the expected JSON bundle."
+}
+
+$probeBundle = Get-Content -Path $probeBundlePath -Raw | ConvertFrom-Json
+if ($probeBundle.presetName -ne "custom-probe-v1") {
+    throw "probe-board.ps1 JSON bundle is missing the preset name."
+}
 
 if (-not $SkipFirmware) {
     Write-Host "[check] building default firmware"

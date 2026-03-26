@@ -128,6 +128,18 @@ powershell -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1 -Port COM7
 ```
 
+如果希望把终端里这份可读输出保存成文本文件：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1 -TextOutputPath .\probe-report.txt
+```
+
+如果还想同时保存完整 JSON bundle，继续使用：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1 -OutputPath .\probe-bundle.json
+```
+
 脚本会输出：
 
 - 建议的 `board-presets.json` 片段
@@ -197,7 +209,7 @@ GitHub Actions 的 release 工作流会产出这三类变体。
 - 硬化构建已经支持关闭 Debug HID。
 - 现在已经有单独的 `probe` 固件与 `scripts/probe-board.ps1`，用于生成 preset 草案。
 - `clientPIN` 现在只保留不带权限范围的旧式 `getPinToken` 路径；`getPinTokenWithPermissions` 仍未实现。
-- 运行时 `pinUvAuthToken` 不再持久化到 Flash，而是在当前上电会话中存在。
+- 运行时 `pinUvAuthToken` 不会持久化到 Flash，并且现在是短生命周期的一次性令牌。
 - `signCount` 已经从主凭据区整区重写路径中拆出，改为单独 journal 持久化；但这还不是最终的掉电安全存储方案。
 
 如果你要做真正的发行，请先看完 [docs/security.md](docs/security.md) 和 [docs/release.md](docs/release.md)。

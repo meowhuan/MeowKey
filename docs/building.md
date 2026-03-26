@@ -39,7 +39,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -Preset custom-base
 - `-CredentialCapacity`
   显式限制最大凭据数；`0` 表示按存储区域自动计算。
 - `-CredentialStoreKB`
-  凭据存储区域大小，必须是 `4 KB` 的整数倍，且当前至少为 `12 KB`。
+  凭据存储区域大小，必须是 `4 KB` 的整数倍，且当前至少为 `16 KB`；扣掉 `8 KB` journal 后剩余数据区会按 A/B 事务槽均分。
 - `-DisableDebugHid`
   关闭 Debug HID，仅保留标准 FIDO HID。
 - `-Probe`
@@ -152,6 +152,18 @@ powershell -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1 -Port COM7
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1 -InputPath .\probe-report.json
+```
+
+如果需要把这份可读输出单独保存成文本文件：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1 -TextOutputPath .\probe-report.txt
+```
+
+如果需要机器可读的完整 JSON bundle：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1 -OutputPath .\probe-bundle.json
 ```
 
 脚本会输出：

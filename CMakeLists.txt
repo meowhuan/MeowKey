@@ -38,10 +38,22 @@ endif()
 
 option(MEOWKEY_ENABLE_SIGNED_BOOT "Generate signed RP2350 images with a local key" OFF)
 option(MEOWKEY_ENABLE_DEBUG_HID "Expose the development-only debug HID interface" ON)
+set(_MEOWKEY_DANGEROUS_DEBUG_DEFAULT ON)
+if (NOT MEOWKEY_ENABLE_DEBUG_HID)
+    set(_MEOWKEY_DANGEROUS_DEBUG_DEFAULT OFF)
+endif()
+option(MEOWKEY_ENABLE_DANGEROUS_DEBUG_COMMANDS "Compile dangerous debug credential-management commands" ${_MEOWKEY_DANGEROUS_DEBUG_DEFAULT})
 set(MEOWKEY_VERSION_MAJOR 0 CACHE STRING "MeowKey firmware major version")
 set(MEOWKEY_VERSION_MINOR 1 CACHE STRING "MeowKey firmware minor version")
 set(MEOWKEY_VERSION_PATCH 0 CACHE STRING "MeowKey firmware patch version")
 set(MEOWKEY_VERSION_LABEL "dev" CACHE STRING "Optional firmware version suffix")
+set(MEOWKEY_UP_DEFAULT_SOURCE "bootsel" CACHE STRING "Default user-presence source: none, bootsel, gpio")
+set_property(CACHE MEOWKEY_UP_DEFAULT_SOURCE PROPERTY STRINGS none bootsel gpio)
+set(MEOWKEY_UP_GPIO_PIN -1 CACHE STRING "Default dedicated user-presence GPIO pin; -1 keeps BOOTSEL as the default")
+option(MEOWKEY_UP_GPIO_ACTIVE_LOW "Interpret the dedicated user-presence GPIO as active-low" ON)
+set(MEOWKEY_UP_TAP_COUNT 2 CACHE STRING "Number of presses required for user presence")
+set(MEOWKEY_UP_GESTURE_WINDOW_MS 750 CACHE STRING "Window for multi-tap user presence gestures")
+set(MEOWKEY_UP_REQUEST_TIMEOUT_MS 8000 CACHE STRING "Maximum wait time for user presence requests")
 
 if (MEOWKEY_CREDENTIAL_CAPACITY LESS 0)
     message(FATAL_ERROR "MEOWKEY_CREDENTIAL_CAPACITY must be 0 or greater")
@@ -51,8 +63,14 @@ if (MEOWKEY_CREDENTIAL_STORE_SECTORS LESS 1)
     message(FATAL_ERROR "MEOWKEY_CREDENTIAL_STORE_SECTORS must be at least 1")
 endif()
 
-if (MEOWKEY_CREDENTIAL_STORE_SECTORS LESS 3)
-    message(FATAL_ERROR "MEOWKEY_CREDENTIAL_STORE_SECTORS must be at least 3 because MeowKey reserves 2 sectors for the sign-count journal")
+if (MEOWKEY_CREDENTIAL_STORE_SECTORS LESS 4)
+    message(FATAL_ERROR "MEOWKEY_CREDENTIAL_STORE_SECTORS must be at least 4 because MeowKey reserves 2 sectors for the sign-count journal and 2 sectors for A/B transactional slots")
+endif()
+
+math(EXPR MEOWKEY_STORE_DATA_SECTORS "${MEOWKEY_CREDENTIAL_STORE_SECTORS} - 2")
+math(EXPR MEOWKEY_STORE_DATA_SECTORS_REMAINDER "${MEOWKEY_STORE_DATA_SECTORS} % 2")
+if (NOT MEOWKEY_STORE_DATA_SECTORS_REMAINDER EQUAL 0)
+    message(FATAL_ERROR "MEOWKEY_CREDENTIAL_STORE_SECTORS must leave an even number of data sectors after reserving the 2-sector sign-count journal")
 endif()
 
 string(TOLOWER "${MEOWKEY_BOARD_ID_MODE}" MEOWKEY_BOARD_ID_MODE_NORMALIZED)
@@ -113,6 +131,56 @@ else()
     set(MEOWKEY_ENABLE_DEBUG_HID_INT 0)
 endif()
 
+if (MEOWKEY_ENABLE_DANGEROUS_DEBUG_COMMANDS)
+    if (NOT MEOWKEY_ENABLE_DEBUG_HID)
+        message(FATAL_ERROR "MEOWKEY_ENABLE_DANGEROUS_DEBUG_COMMANDS requires MEOWKEY_ENABLE_DEBUG_HID=ON")
+    endif()
+    set(MEOWKEY_ENABLE_DANGEROUS_DEBUG_COMMANDS_INT 1)
+else()
+    set(MEOWKEY_ENABLE_DANGEROUS_DEBUG_COMMANDS_INT 0)
+endif()
+
+string(TOLOWER "${MEOWKEY_UP_DEFAULT_SOURCE}" MEOWKEY_UP_DEFAULT_SOURCE_NORMALIZED)
+if (MEOWKEY_UP_DEFAULT_SOURCE_NORMALIZED STREQUAL "none")
+    set(MEOWKEY_DEFAULT_UP_SOURCE_CODE 0)
+elseif (MEOWKEY_UP_DEFAULT_SOURCE_NORMALIZED STREQUAL "bootsel")
+    set(MEOWKEY_DEFAULT_UP_SOURCE_CODE 1)
+elseif (MEOWKEY_UP_DEFAULT_SOURCE_NORMALIZED STREQUAL "gpio")
+    set(MEOWKEY_DEFAULT_UP_SOURCE_CODE 2)
+else()
+    message(FATAL_ERROR "Unsupported MEOWKEY_UP_DEFAULT_SOURCE='${MEOWKEY_UP_DEFAULT_SOURCE}'. Use none, bootsel, or gpio")
+endif()
+
+if (MEOWKEY_DEFAULT_UP_SOURCE_CODE EQUAL 2 AND MEOWKEY_UP_GPIO_PIN LESS 0)
+    message(FATAL_ERROR "MEOWKEY_UP_GPIO_PIN must be >= 0 when MEOWKEY_UP_DEFAULT_SOURCE=gpio")
+endif()
+
+if (MEOWKEY_UP_TAP_COUNT LESS 1 OR MEOWKEY_UP_TAP_COUNT GREATER 4)
+    message(FATAL_ERROR "MEOWKEY_UP_TAP_COUNT must be between 1 and 4")
+endif()
+
+if (MEOWKEY_UP_GESTURE_WINDOW_MS LESS 100 OR MEOWKEY_UP_GESTURE_WINDOW_MS GREATER 5000)
+    message(FATAL_ERROR "MEOWKEY_UP_GESTURE_WINDOW_MS must be between 100 and 5000")
+endif()
+
+if (MEOWKEY_UP_REQUEST_TIMEOUT_MS LESS 500 OR MEOWKEY_UP_REQUEST_TIMEOUT_MS GREATER 30000)
+    message(FATAL_ERROR "MEOWKEY_UP_REQUEST_TIMEOUT_MS must be between 500 and 30000")
+endif()
+
+if (MEOWKEY_UP_GPIO_ACTIVE_LOW)
+    set(MEOWKEY_UP_GPIO_ACTIVE_LOW_INT 1)
+else()
+    set(MEOWKEY_UP_GPIO_ACTIVE_LOW_INT 0)
+endif()
+
+if (MEOWKEY_ENABLE_DEBUG_HID)
+    set(MEOWKEY_PRODUCT_NAME "MeowKey DEV UNSAFE")
+    set(MEOWKEY_USB_PRODUCT_NAME "MeowKey DEV UNSAFE RP2350")
+else()
+    set(MEOWKEY_PRODUCT_NAME "MeowKey Hardened")
+    set(MEOWKEY_USB_PRODUCT_NAME "MeowKey Hardened RP2350")
+endif()
+
 set(MEOWKEY_PROGRAM_VERSION "${MEOWKEY_VERSION_MAJOR}.${MEOWKEY_VERSION_MINOR}.${MEOWKEY_VERSION_PATCH}")
 if (NOT "${MEOWKEY_VERSION_LABEL}" STREQUAL "")
     set(MEOWKEY_PROGRAM_VERSION "${MEOWKEY_PROGRAM_VERSION}-${MEOWKEY_VERSION_LABEL}")
@@ -138,6 +206,7 @@ add_executable(meowkey
     src/diagnostics.c
     src/main.c
     src/mbedtls_compat.c
+    src/user_presence.c
     src/usb_descriptors.c
     src/webauthn.c
 )
@@ -186,7 +255,7 @@ target_compile_definitions(meowkey_probe PRIVATE
     PICO_STDIO_ENABLE_CRLF_SUPPORT=0
 )
 
-pico_set_program_name(meowkey "MeowKey")
+pico_set_program_name(meowkey "${MEOWKEY_PRODUCT_NAME}")
 pico_set_program_version(meowkey "${MEOWKEY_PROGRAM_VERSION}")
 pico_enable_stdio_uart(meowkey 0)
 pico_enable_stdio_usb(meowkey 0)

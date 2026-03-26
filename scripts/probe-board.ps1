@@ -2,6 +2,7 @@ param(
     [string]$Port = "",
     [string]$InputPath = "",
     [string]$OutputPath = "",
+    [string]$TextOutputPath = "",
     [string]$PresetName = "custom-probe-v1",
     [string]$Board = "meowkey_rp2350_usb",
     [int]$FlashSizeMB = 16,
@@ -294,6 +295,34 @@ function Resolve-PresetDraft {
     }
 }
 
+function ConvertTo-PrettyJson {
+    param($Value)
+
+    return ($Value | ConvertTo-Json -Depth 16)
+}
+
+function New-ProbeTextReport {
+    param(
+        $Draft,
+        $Report
+    )
+
+    $newline = [System.Environment]::NewLine
+    $notesText = if ($Draft.notes.Count -eq 0) {
+        "- no extra notes"
+    } else {
+        ($Draft.notes | ForEach-Object { "- $_" }) -join $newline
+    }
+
+    $sections = @(
+        "=== Suggested preset snippet ===$newline$(ConvertTo-PrettyJson -Value $Draft.presetSnippet)"
+        "=== Notes ===$newline$notesText"
+        "=== Raw probe report ===$newline$(ConvertTo-PrettyJson -Value $Report)"
+    )
+
+    return ($sections -join ($newline + $newline))
+}
+
 $report = Resolve-ProbeReport
 if (-not $report.schemaVersion -or [int]$report.schemaVersion -lt 1) {
     throw "The probe report is missing a supported schemaVersion."
@@ -309,23 +338,14 @@ $result = [ordered]@{
     report = $report
 }
 
-Write-Host ""
-Write-Host "=== Suggested preset snippet ==="
-$draft.presetSnippet | ConvertTo-Json -Depth 16
+$textReport = New-ProbeTextReport -Draft $draft -Report $report
+Write-Output $textReport
 
-Write-Host ""
-Write-Host "=== Notes ==="
-if ($draft.notes.Count -eq 0) {
-    Write-Host "- no extra notes"
-} else {
-    foreach ($note in $draft.notes) {
-        Write-Host "- $note"
-    }
+if ($TextOutputPath) {
+    $textReport | Set-Content -Path $TextOutputPath -Encoding utf8
+    Write-Host ""
+    Write-Host "Saved text report to $TextOutputPath"
 }
-
-Write-Host ""
-Write-Host "=== Raw probe report ==="
-$report | ConvertTo-Json -Depth 16
 
 if ($OutputPath) {
     $result | ConvertTo-Json -Depth 16 | Set-Content -Path $OutputPath -Encoding utf8

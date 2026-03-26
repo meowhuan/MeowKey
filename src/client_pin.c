@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "bsp/board_api.h"
 #include "cbor.h"
 #include "credential_store.h"
 #include "diagnostics.h"
@@ -25,6 +26,7 @@ enum {
     CTAP2_ERR_PIN_NOT_SET = 0x35,
     CTAP2_ERR_PIN_REQUIRED = 0x36,
     CTAP2_ERR_PIN_POLICY_VIOLATION = 0x37,
+    CTAP2_ERR_PIN_TOKEN_EXPIRED = 0x38,
     CTAP2_ERR_UNSUPPORTED_OPTION = 0x2b,
 };
 
@@ -38,6 +40,8 @@ enum {
     CLIENT_PIN_RETRIES_DEFAULT = 8,
     CLIENT_PIN_TOKEN_SIZE = 32,
     CLIENT_PIN_HASH_SIZE = 16,
+    CLIENT_PIN_TOKEN_LIFETIME_MS = 30000u,
+    CLIENT_PIN_TOKEN_MAX_USES = 1u,
 };
 
 typedef struct {
@@ -65,6 +69,8 @@ static uint8_t s_key_agreement_private[32];
 static uint8_t s_key_agreement_public[65];
 static bool s_runtime_pin_token_ready = false;
 static uint8_t s_runtime_pin_token[CLIENT_PIN_TOKEN_SIZE];
+static uint32_t s_runtime_pin_token_issued_at_ms = 0u;
+static uint8_t s_runtime_pin_token_remaining_uses = 0u;
 
 static int client_pin_random(void *context, unsigned char *output, size_t output_length) {
     (void)context;
@@ -96,17 +102,40 @@ static bool constant_time_equal(const uint8_t *left, const uint8_t *right, size_
     return diff == 0u;
 }
 
+static void clear_runtime_pin_token(void) {
+    secure_zero(s_runtime_pin_token, sizeof(s_runtime_pin_token));
+    s_runtime_pin_token_ready = false;
+    s_runtime_pin_token_issued_at_ms = 0u;
+    s_runtime_pin_token_remaining_uses = 0u;
+}
+
 static bool rotate_runtime_pin_token(void) {
     client_pin_random(NULL, s_runtime_pin_token, sizeof(s_runtime_pin_token));
     s_runtime_pin_token_ready = true;
+    s_runtime_pin_token_issued_at_ms = board_millis();
+    s_runtime_pin_token_remaining_uses = CLIENT_PIN_TOKEN_MAX_USES;
     return true;
 }
 
-static bool ensure_runtime_pin_token(void) {
-    if (s_runtime_pin_token_ready) {
-        return true;
+static bool runtime_pin_token_is_usable(void) {
+    if (!s_runtime_pin_token_ready) {
+        return false;
     }
-    return rotate_runtime_pin_token();
+    if ((board_millis() - s_runtime_pin_token_issued_at_ms) > CLIENT_PIN_TOKEN_LIFETIME_MS ||
+        s_runtime_pin_token_remaining_uses == 0u) {
+        clear_runtime_pin_token();
+        return false;
+    }
+    return true;
+}
+
+static void consume_runtime_pin_token_use(void) {
+    if (s_runtime_pin_token_remaining_uses > 0u) {
+        s_runtime_pin_token_remaining_uses -= 1u;
+    }
+    if (s_runtime_pin_token_remaining_uses == 0u) {
+        clear_runtime_pin_token();
+    }
 }
 
 static bool sha256_bytes(const uint8_t *data, size_t length, uint8_t output[32]) {
@@ -457,14 +486,58 @@ static uint8_t validate_shared_secret_hmac(const uint8_t shared_secret[32],
     return constant_time_equal(expected, provided_param, 16u) ? CTAP2_STATUS_OK : CTAP2_ERR_PIN_AUTH_INVALID;
 }
 
+static uint8_t parse_new_pin_hash(const uint8_t shared_secret[32],
+                                  const uint8_t *new_pin_enc,
+                                  size_t new_pin_enc_length,
+                                  uint8_t pin_hash[32],
+                                  size_t *pin_length_out) {
+    uint8_t decrypted_pin[80];
+    size_t pin_length = 0u;
+
+    if (!aes256_cbc_crypt(false, shared_secret, new_pin_enc, new_pin_enc_length, decrypted_pin)) {
+        return CTAP2_ERR_INVALID_CBOR;
+    }
+
+    while (pin_length < new_pin_enc_length && decrypted_pin[pin_length] != 0u) {
+        pin_length += 1u;
+    }
+    if (pin_length < 4u || pin_length > 63u) {
+        secure_zero(decrypted_pin, sizeof(decrypted_pin));
+        return CTAP2_ERR_PIN_POLICY_VIOLATION;
+    }
+    if (!sha256_bytes(decrypted_pin, pin_length, pin_hash)) {
+        secure_zero(decrypted_pin, sizeof(decrypted_pin));
+        return CTAP2_ERR_INVALID_CBOR;
+    }
+
+    secure_zero(decrypted_pin, sizeof(decrypted_pin));
+    if (pin_length_out != NULL) {
+        *pin_length_out = pin_length;
+    }
+    return CTAP2_STATUS_OK;
+}
+
+static uint8_t verify_pin_hash_or_consume_retry(meowkey_pin_state_t *pin_state, const uint8_t provided_pin_hash[32]) {
+    if (constant_time_equal(provided_pin_hash, pin_state->pin_hash, CLIENT_PIN_HASH_SIZE)) {
+        return CTAP2_STATUS_OK;
+    }
+
+    if (pin_state->retries > 0u) {
+        pin_state->retries -= 1u;
+        (void)meowkey_store_set_pin_state(pin_state);
+    }
+    meowkey_diag_logf("clientPIN pinHash mismatch retries=%u", pin_state->retries);
+    return pin_state->retries == 0u ? CTAP2_ERR_PIN_BLOCKED : CTAP2_ERR_PIN_INVALID;
+}
+
 static uint8_t handle_set_pin(const client_pin_request_t *request,
                               uint8_t *response,
                               size_t *response_length) {
     meowkey_pin_state_t pin_state;
     uint8_t shared_secret[32];
-    uint8_t decrypted_pin[80];
     uint8_t pin_hash[32];
     size_t pin_length = 0u;
+    uint8_t status;
 
     meowkey_store_get_pin_state(&pin_state);
     if (pin_state.configured) {
@@ -483,26 +556,11 @@ static uint8_t handle_set_pin(const client_pin_request_t *request,
                                     request->pin_uv_auth_param_length) != CTAP2_STATUS_OK) {
         return CTAP2_ERR_PIN_AUTH_INVALID;
     }
-    if (!aes256_cbc_crypt(false,
-                          shared_secret,
-                          request->new_pin_enc,
-                          request->new_pin_enc_length,
-                          decrypted_pin)) {
-        return CTAP2_ERR_INVALID_CBOR;
-    }
-
-    while (pin_length < request->new_pin_enc_length && decrypted_pin[pin_length] != 0u) {
-        pin_length += 1u;
-    }
-    if (pin_length < 4u || pin_length > 63u) {
+    status = parse_new_pin_hash(shared_secret, request->new_pin_enc, request->new_pin_enc_length, pin_hash, &pin_length);
+    if (status != CTAP2_STATUS_OK) {
         secure_zero(shared_secret, sizeof(shared_secret));
-        secure_zero(decrypted_pin, sizeof(decrypted_pin));
-        return CTAP2_ERR_PIN_POLICY_VIOLATION;
-    }
-    if (!sha256_bytes(decrypted_pin, pin_length, pin_hash)) {
-        secure_zero(shared_secret, sizeof(shared_secret));
-        secure_zero(decrypted_pin, sizeof(decrypted_pin));
-        return CTAP2_ERR_INVALID_CBOR;
+        secure_zero(pin_hash, sizeof(pin_hash));
+        return status;
     }
 
     memset(&pin_state, 0, sizeof(pin_state));
@@ -511,16 +569,93 @@ static uint8_t handle_set_pin(const client_pin_request_t *request,
     memcpy(pin_state.pin_hash, pin_hash, CLIENT_PIN_HASH_SIZE);
     if (!meowkey_store_set_pin_state(&pin_state)) {
         secure_zero(shared_secret, sizeof(shared_secret));
-        secure_zero(decrypted_pin, sizeof(decrypted_pin));
         secure_zero(pin_hash, sizeof(pin_hash));
         return CTAP2_ERR_INVALID_CBOR;
     }
-    (void)rotate_runtime_pin_token();
+    clear_runtime_pin_token();
     secure_zero(shared_secret, sizeof(shared_secret));
-    secure_zero(decrypted_pin, sizeof(decrypted_pin));
     secure_zero(pin_hash, sizeof(pin_hash));
 
     meowkey_diag_logf("clientPIN setPIN success pinLength=%lu", (unsigned long)pin_length);
+    return write_empty_map(response, response_length) ? CTAP2_STATUS_OK : CTAP2_ERR_INVALID_CBOR;
+}
+
+static uint8_t handle_change_pin(const client_pin_request_t *request,
+                                 uint8_t *response,
+                                 size_t *response_length) {
+    meowkey_pin_state_t pin_state;
+    uint8_t shared_secret[32];
+    uint8_t decrypted_pin_hash[32];
+    uint8_t pin_hash[32];
+    uint8_t auth_message[sizeof(request->new_pin_enc) + sizeof(request->pin_hash_enc)];
+    size_t auth_message_length = request->new_pin_enc_length + request->pin_hash_enc_length;
+    size_t pin_length = 0u;
+    uint8_t status;
+
+    meowkey_store_get_pin_state(&pin_state);
+    if (!pin_state.configured) {
+        return CTAP2_ERR_PIN_NOT_SET;
+    }
+    if (pin_state.retries == 0u) {
+        return CTAP2_ERR_PIN_BLOCKED;
+    }
+    if (!request->have_key_agreement || !request->have_pin_uv_auth_param ||
+        !request->have_new_pin_enc || !request->have_pin_hash_enc) {
+        return CTAP2_ERR_MISSING_PARAMETER;
+    }
+    if (request->pin_hash_enc_length != 16u) {
+        return CTAP2_ERR_INVALID_CBOR;
+    }
+    if (!derive_shared_secret(request->peer_public_key, shared_secret)) {
+        return CTAP2_ERR_INVALID_CBOR;
+    }
+
+    memcpy(auth_message, request->new_pin_enc, request->new_pin_enc_length);
+    memcpy(&auth_message[request->new_pin_enc_length], request->pin_hash_enc, request->pin_hash_enc_length);
+    status = validate_shared_secret_hmac(shared_secret,
+                                         auth_message,
+                                         auth_message_length,
+                                         request->pin_uv_auth_param,
+                                         request->pin_uv_auth_param_length);
+    if (status != CTAP2_STATUS_OK) {
+        secure_zero(shared_secret, sizeof(shared_secret));
+        return status;
+    }
+    if (!aes256_cbc_crypt(false,
+                          shared_secret,
+                          request->pin_hash_enc,
+                          request->pin_hash_enc_length,
+                          decrypted_pin_hash)) {
+        secure_zero(shared_secret, sizeof(shared_secret));
+        return CTAP2_ERR_INVALID_CBOR;
+    }
+
+    status = verify_pin_hash_or_consume_retry(&pin_state, decrypted_pin_hash);
+    secure_zero(decrypted_pin_hash, sizeof(decrypted_pin_hash));
+    if (status != CTAP2_STATUS_OK) {
+        secure_zero(shared_secret, sizeof(shared_secret));
+        return status;
+    }
+
+    status = parse_new_pin_hash(shared_secret, request->new_pin_enc, request->new_pin_enc_length, pin_hash, &pin_length);
+    if (status != CTAP2_STATUS_OK) {
+        secure_zero(shared_secret, sizeof(shared_secret));
+        secure_zero(pin_hash, sizeof(pin_hash));
+        return status;
+    }
+
+    pin_state.retries = CLIENT_PIN_RETRIES_DEFAULT;
+    memcpy(pin_state.pin_hash, pin_hash, CLIENT_PIN_HASH_SIZE);
+    if (!meowkey_store_set_pin_state(&pin_state)) {
+        secure_zero(shared_secret, sizeof(shared_secret));
+        secure_zero(pin_hash, sizeof(pin_hash));
+        return CTAP2_ERR_INVALID_CBOR;
+    }
+
+    clear_runtime_pin_token();
+    secure_zero(shared_secret, sizeof(shared_secret));
+    secure_zero(pin_hash, sizeof(pin_hash));
+    meowkey_diag_logf("clientPIN changePIN success pinLength=%lu", (unsigned long)pin_length);
     return write_empty_map(response, response_length) ? CTAP2_STATUS_OK : CTAP2_ERR_INVALID_CBOR;
 }
 
@@ -557,20 +692,18 @@ static uint8_t handle_get_pin_token(const client_pin_request_t *request,
         return CTAP2_ERR_INVALID_CBOR;
     }
 
-    if (!constant_time_equal(decrypted_pin_hash, pin_state.pin_hash, CLIENT_PIN_HASH_SIZE)) {
-        if (pin_state.retries > 0u) {
-            pin_state.retries -= 1u;
-            (void)meowkey_store_set_pin_state(&pin_state);
+    {
+        uint8_t status = verify_pin_hash_or_consume_retry(&pin_state, decrypted_pin_hash);
+        if (status != CTAP2_STATUS_OK) {
+            secure_zero(shared_secret, sizeof(shared_secret));
+            secure_zero(decrypted_pin_hash, sizeof(decrypted_pin_hash));
+            return status;
         }
-        secure_zero(shared_secret, sizeof(shared_secret));
-        secure_zero(decrypted_pin_hash, sizeof(decrypted_pin_hash));
-        meowkey_diag_logf("clientPIN pinHash mismatch retries=%u", pin_state.retries);
-        return pin_state.retries == 0u ? CTAP2_ERR_PIN_BLOCKED : CTAP2_ERR_PIN_INVALID;
     }
 
     pin_state.retries = CLIENT_PIN_RETRIES_DEFAULT;
     (void)meowkey_store_set_pin_state(&pin_state);
-    if (!ensure_runtime_pin_token()) {
+    if (!rotate_runtime_pin_token()) {
         secure_zero(shared_secret, sizeof(shared_secret));
         secure_zero(decrypted_pin_hash, sizeof(decrypted_pin_hash));
         return CTAP2_ERR_INVALID_CBOR;
@@ -627,6 +760,9 @@ uint8_t meowkey_client_pin_handle(const uint8_t *request,
     case CLIENT_PIN_SUBCMD_SET_PIN:
         return handle_set_pin(&parsed, response, response_length);
 
+    case CLIENT_PIN_SUBCMD_CHANGE_PIN:
+        return handle_change_pin(&parsed, response, response_length);
+
     case CLIENT_PIN_SUBCMD_GET_PIN_TOKEN:
         return handle_get_pin_token(&parsed, response, response_length);
 
@@ -637,7 +773,6 @@ uint8_t meowkey_client_pin_handle(const uint8_t *request,
         meowkey_diag_logf("clientPIN permissions token request unsupported");
         return CTAP2_ERR_UNSUPPORTED_OPTION;
 
-    case CLIENT_PIN_SUBCMD_CHANGE_PIN:
     default:
         return CTAP2_ERR_UNSUPPORTED_OPTION;
     }
@@ -658,12 +793,13 @@ uint8_t meowkey_client_pin_verify_auth(const uint8_t client_data_hash[32],
         }
         return CTAP2_STATUS_OK;
     }
-    if (!ensure_runtime_pin_token()) {
-        return CTAP2_ERR_INVALID_CBOR;
-    }
     if (protocol != MEOWKEY_PIN_UV_AUTH_PROTOCOL_1 || pin_uv_auth_param == NULL) {
         meowkey_diag_logf("pinUvAuth missing or protocol unsupported");
         return CTAP2_ERR_PIN_REQUIRED;
+    }
+    if (!runtime_pin_token_is_usable()) {
+        meowkey_diag_logf("pinUvAuth token expired");
+        return CTAP2_ERR_PIN_TOKEN_EXPIRED;
     }
     if (!hmac_sha256(s_runtime_pin_token, sizeof(s_runtime_pin_token), client_data_hash, 32u, expected)) {
         return CTAP2_ERR_INVALID_CBOR;
@@ -672,6 +808,7 @@ uint8_t meowkey_client_pin_verify_auth(const uint8_t client_data_hash[32],
         meowkey_diag_logf("pinUvAuth invalid");
         return CTAP2_ERR_PIN_AUTH_INVALID;
     }
+    consume_runtime_pin_token_use();
     return CTAP2_STATUS_OK;
 }
 

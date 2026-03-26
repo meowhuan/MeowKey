@@ -68,10 +68,11 @@ USB 接收到 HID 输出报文后，流程是：
 
 ## 5. CTAP2 层
 
-`src/ctap2.c` 目前处理四类命令：
+`src/ctap2.c` 目前处理五类命令：
 
 - `authenticatorMakeCredential`
 - `authenticatorGetAssertion`
+- `authenticatorGetNextAssertion`
 - `authenticatorGetInfo`
 - `authenticatorClientPIN`
 
@@ -92,8 +93,8 @@ USB 接收到 HID 输出报文后，流程是：
 当前行为有几个重要事实：
 
 - 所有已创建凭据都会被当作 discoverable credential 存储。
-- `getAssertion` 无 `allowList` 时，只会返回匹配 RP ID 的第一条凭据。
-- 还没有 `getNextAssertion` / `numberOfCredentials`。
+- `getAssertion` 无 `allowList` 且命中多条 discoverable credential 时，会返回 `numberOfCredentials` 并允许继续走 `getNextAssertion`。
+- 当前默认会在注册和断言时要求一次真实的物理用户在场确认。
 - attestation 仍固定为 `"none"`。
 
 ## 7. Client PIN
@@ -103,16 +104,17 @@ USB 接收到 HID 输出报文后，流程是：
 - `getRetries`
 - `getKeyAgreement`
 - `setPin`
+- `changePin`
 - `getPinToken`
 
 已经明确不支持：
 
-- `changePin`
 - `getPinTokenWithPermissions`
 
 当前实现的几个边界：
 
-- `pinUvAuthToken` 是运行时令牌，不再持久化到 Flash。
+- `pinUvAuthToken` 是运行时令牌，不会持久化到 Flash。
+- `pinUvAuthToken` 现在是短生命周期的一次性令牌，用完或超时后失效。
 - `pinHash` 和重试计数仍持久化在 Flash。
 - token 权限范围没有实现，因此直接拒绝权限 token 子命令。
 
@@ -123,7 +125,7 @@ USB 接收到 HID 输出报文后，流程是：
 - `version 1`
 - `version 2`
 - `version 3`
-- 当前 `version 4`
+- 当前 `version 6`
 
 当前存储内容包括：
 
@@ -138,10 +140,10 @@ USB 接收到 HID 输出报文后，流程是：
 
 当前存储层的现实限制：
 
-- 每次更新都会整块擦写保留区。
-- 没有磨损均衡。
-- 没有事务日志或双写保护。
-- 掉电时可能损坏整个凭据区。
+- 仍然没有磨损均衡。
+- 私钥与 PIN 哈希仍明文落在普通 Flash。
+- 主区已经改成带 `generation/crc` 的 A/B 事务提交，`signCount` journal 也会和主区代际绑定。
+- 这已经能扛掉电，但还不是量产级的 secure storage。
 
 ## 9. 板卡 ID
 
@@ -166,15 +168,16 @@ USB 接收到 HID 输出报文后，流程是：
 - 主凭据区
 - `signCount` journal 区
 
-当前格式版本为 `version 5`。
+当前格式版本为 `version 6`。
 
 这意味着：
 
 - 凭据主体仍保存在 Flash 尾部
-- `signCount` 更新不再每次都重写主凭据区
-- journal 满了以后会压实回写到主凭据区
+- 主区按 A/B 槽提交，并在 header 里记录 `generation` / `crc`
+- `signCount` journal 会绑定当前主区版本与校验值，避免压实后错配
+- journal 满了以后会把当前视图压实进新的主槽
 
-这只是第一阶段可靠性补丁，还不是完整事务化存储。
+这已经是事务化存储的第一版，但还不是最终的量产方案。
 
 ## 11. 开发工具如何接入
 

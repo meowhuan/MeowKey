@@ -127,7 +127,7 @@ static const uint8_t desc_configuration[] = {
 static const char *const string_desc_arr[] = {
     (const char[]){0x09, 0x04},
     "MeowKey",
-    "MeowKey RP2350",
+    MEOWKEY_USB_PRODUCT_NAME,
     NULL,
 };
 

@@ -37,8 +37,16 @@ typedef struct {
     bool configured;
     uint8_t retries;
     uint8_t pin_hash[16];
-    uint8_t pin_token[32];
 } meowkey_pin_state_t;
+
+typedef struct {
+    uint8_t source;
+    int8_t gpio_pin;
+    uint8_t gpio_active_low;
+    uint8_t tap_count;
+    uint16_t gesture_window_ms;
+    uint16_t request_timeout_ms;
+} meowkey_user_presence_config_t;
 
 void meowkey_store_init(void);
 bool meowkey_store_add_credential(const meowkey_credential_record_t *record, uint32_t *slot_index);
@@ -56,6 +64,8 @@ bool meowkey_store_update_sign_count(uint32_t slot_index, uint32_t sign_count);
 bool meowkey_store_clear_credentials(void);
 void meowkey_store_get_pin_state(meowkey_pin_state_t *state);
 bool meowkey_store_set_pin_state(const meowkey_pin_state_t *state);
+void meowkey_store_get_user_presence_config(meowkey_user_presence_config_t *config);
+bool meowkey_store_set_user_presence_config(const meowkey_user_presence_config_t *config);
 uint32_t meowkey_store_get_format_version(void);
 size_t meowkey_store_write_summary(char *output, size_t output_capacity);
 

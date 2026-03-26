@@ -27,7 +27,7 @@ const PACKET_SIZE: usize = 64;
 const INIT_PAYLOAD_SIZE: usize = 57;
 const CONT_PAYLOAD_SIZE: usize = 59;
 const BROADCAST_CID: u32 = 0xffff_ffff;
-const RESPONSE_TIMEOUT: Duration = Duration::from_secs(2);
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 const CTAPHID_PING: u8 = 0x01;
 const CTAPHID_INIT: u8 = 0x06;
@@ -48,6 +48,9 @@ const CTAP2_ERR_UNSUPPORTED_ALGORITHM: u8 = 0x26;
 const CTAP2_ERR_KEY_STORE_FULL: u8 = 0x28;
 const CTAP2_ERR_UNSUPPORTED_OPTION: u8 = 0x2b;
 const CTAP2_ERR_NO_CREDENTIALS: u8 = 0x2e;
+const CTAP2_ERR_USER_ACTION_TIMEOUT: u8 = 0x2f;
+const CTAP2_ERR_NOT_ALLOWED: u8 = 0x30;
+const CTAP2_ERR_PIN_TOKEN_EXPIRED: u8 = 0x38;
 
 type Logger<'a> = &'a mut dyn FnMut(&str, &str);
 
@@ -1255,6 +1258,9 @@ fn ctap_status_name(status: u8) -> String {
         CTAP2_ERR_KEY_STORE_FULL => "KEY_STORE_FULL".to_string(),
         CTAP2_ERR_UNSUPPORTED_OPTION => "UNSUPPORTED_OPTION".to_string(),
         CTAP2_ERR_NO_CREDENTIALS => "NO_CREDENTIALS".to_string(),
+        CTAP2_ERR_USER_ACTION_TIMEOUT => "USER_ACTION_TIMEOUT".to_string(),
+        CTAP2_ERR_NOT_ALLOWED => "NOT_ALLOWED".to_string(),
+        CTAP2_ERR_PIN_TOKEN_EXPIRED => "PIN_TOKEN_EXPIRED".to_string(),
         _ => format!("0x{status:02x}"),
     }
 }

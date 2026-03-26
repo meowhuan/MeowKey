@@ -107,6 +107,8 @@ static const char *ctap_command_name(uint8_t command) {
         return "getInfo";
     case 0x06:
         return "clientPIN";
+    case 0x08:
+        return "getNextAssertion";
     default:
         return "unknown";
     }
@@ -132,6 +134,10 @@ static const char *ctap_status_name(uint8_t status) {
         return "UNSUPPORTED_OPTION";
     case 0x2e:
         return "NO_CREDENTIALS";
+    case 0x2f:
+        return "USER_ACTION_TIMEOUT";
+    case 0x30:
+        return "NOT_ALLOWED";
     case 0x31:
         return "PIN_INVALID";
     case 0x32:
@@ -142,6 +148,8 @@ static const char *ctap_status_name(uint8_t status) {
         return "PIN_NOT_SET";
     case 0x36:
         return "PIN_REQUIRED";
+    case 0x38:
+        return "PIN_TOKEN_EXPIRED";
     default:
         return "OTHER";
     }
@@ -204,6 +212,7 @@ static size_t hex_prefix(const uint8_t *data, size_t length, char *output, size_
     return prefix_length * 2u;
 }
 
+#if MEOWKEY_ENABLE_DANGEROUS_DEBUG_COMMANDS
 static size_t list_credentials(char *output, size_t output_capacity) {
     size_t used = 0u;
     uint32_t total = meowkey_store_get_credential_count();
@@ -275,6 +284,7 @@ static size_t list_credentials(char *output, size_t output_capacity) {
     }
     return used;
 }
+#endif
 
 static void clear_request_state(ctap_hid_interface_state_t *state) {
     state->request_in_progress = false;
@@ -374,6 +384,7 @@ static void handle_diagnostics(ctap_hid_interface_state_t *state,
     if (action == 2u) {
         meowkey_diag_clear();
         response_length = (size_t)snprintf((char *)response, sizeof(response), "诊断日志已清空。\n");
+#if MEOWKEY_ENABLE_DANGEROUS_DEBUG_COMMANDS
     } else if (action == 3u) {
         if (meowkey_store_clear_credentials()) {
             meowkey_diag_logf("credential store cleared via debug diag");
@@ -383,6 +394,7 @@ static void handle_diagnostics(ctap_hid_interface_state_t *state,
         }
     } else if (action == 4u) {
         response_length = list_credentials((char *)response, sizeof(response));
+#endif
     } else {
         response_length = meowkey_diag_snapshot((char *)response, sizeof(response));
     }

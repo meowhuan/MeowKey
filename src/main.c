@@ -9,6 +9,7 @@
 #include "pico/stdlib.h"
 #include "pico/status_led.h"
 #include "tusb.h"
+#include "user_presence.h"
 
 enum {
     BLINK_NOT_MOUNTED_MS = 250,
@@ -115,6 +116,7 @@ int main(void) {
     meowkey_diag_init();
     meowkey_board_id_init();
     meowkey_board_id_log_summary();
+    meowkey_user_presence_init();
     ctap_hid_init();
     tusb_init();
 

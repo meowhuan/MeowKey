@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "bsp/board_api.h"
 #include "cbor.h"
 #include "client_pin.h"
 #include "credential_store.h"
@@ -15,6 +16,7 @@
 #include "mbedtls/private_access.h"
 #include "mbedtls/sha256.h"
 #include "pico/rand.h"
+#include "user_presence.h"
 
 enum {
     CTAP2_STATUS_OK = 0x00,
@@ -27,6 +29,8 @@ enum {
     CTAP2_ERR_KEY_STORE_FULL = 0x28,
     CTAP2_ERR_UNSUPPORTED_OPTION = 0x2b,
     CTAP2_ERR_NO_CREDENTIALS = 0x2e,
+    CTAP2_ERR_USER_ACTION_TIMEOUT = 0x2f,
+    CTAP2_ERR_NOT_ALLOWED = 0x30,
     CTAP2_ERR_PIN_NOT_SET = 0x35,
 };
 
@@ -34,6 +38,8 @@ enum {
     CTAP2_COSE_KTY_EC2 = 2,
     CTAP2_COSE_ALG_ES256 = -7,
     CTAP2_COSE_CRV_P256 = 1,
+    MEOWKEY_PENDING_ASSERTION_MAX_CREDENTIALS = 128,
+    MEOWKEY_PENDING_ASSERTION_TIMEOUT_MS = 30000u,
 };
 
 typedef struct {
@@ -84,10 +90,21 @@ typedef struct {
     size_t hmac_secret_salt_auth_length;
 } get_assertion_request_t;
 
+typedef struct {
+    bool active;
+    get_assertion_request_t request;
+    uint32_t slot_indices[MEOWKEY_PENDING_ASSERTION_MAX_CREDENTIALS];
+    uint32_t credential_count;
+    uint32_t next_index;
+    uint32_t last_used_ms;
+} pending_assertion_state_t;
+
 static const uint8_t k_aaguid[16] = {
     0x4d, 0x65, 0x6f, 0x77, 0x4b, 0x65, 0x79, 0x00,
     0x52, 0x50, 0x32, 0x33, 0x35, 0x30, 0x00, 0x01,
 };
+
+static pending_assertion_state_t s_pending_assertion;
 
 static int webauthn_random(void *context, unsigned char *output, size_t output_length) {
     (void)context;
@@ -99,6 +116,21 @@ static int webauthn_random(void *context, unsigned char *output, size_t output_l
         output_length -= chunk_length;
     }
     return 0;
+}
+
+static void clear_pending_assertion(void) {
+    memset(&s_pending_assertion, 0, sizeof(s_pending_assertion));
+}
+
+static bool pending_assertion_is_current(void) {
+    if (!s_pending_assertion.active) {
+        return false;
+    }
+    if ((board_millis() - s_pending_assertion.last_used_ms) > MEOWKEY_PENDING_ASSERTION_TIMEOUT_MS) {
+        clear_pending_assertion();
+        return false;
+    }
+    return true;
 }
 
 static bool copy_view_to_string(meowkey_cbor_view_t view, char *output, size_t output_capacity, size_t *output_length) {
@@ -1171,10 +1203,15 @@ static uint8_t build_get_assertion_response(const meowkey_credential_record_t *r
                                             size_t auth_data_length,
                                             const uint8_t *signature,
                                             size_t signature_length,
+                                            bool include_number_of_credentials,
+                                            uint32_t number_of_credentials,
                                             uint8_t *response,
                                             size_t *response_length) {
     meowkey_cbor_writer_t writer;
     size_t map_count = record->user_id_length > 0u ? 4u : 3u;
+    if (include_number_of_credentials) {
+        map_count += 1u;
+    }
 
     meowkey_cbor_writer_init(&writer, response, *response_length);
     meowkey_cbor_write_map_start(&writer, map_count);
@@ -1211,12 +1248,104 @@ static uint8_t build_get_assertion_response(const meowkey_credential_record_t *r
         }
     }
 
+    if (include_number_of_credentials) {
+        meowkey_cbor_write_int(&writer, 5);
+        meowkey_cbor_write_int(&writer, number_of_credentials);
+    }
+
     if (writer.failed) {
         return CTAP2_ERR_INVALID_CBOR;
     }
 
     *response_length = writer.length;
     return CTAP2_STATUS_OK;
+}
+
+static uint32_t collect_matching_slots(const get_assertion_request_t *request, uint32_t *slot_indices, uint32_t slot_capacity) {
+    uint32_t count = 0u;
+    uint32_t capacity = meowkey_store_get_credential_capacity();
+    uint32_t slot_index;
+
+    for (slot_index = 0u; slot_index < capacity && count < slot_capacity; ++slot_index) {
+        meowkey_credential_record_t record;
+        if (!meowkey_store_get_credential_by_slot(slot_index, &record)) {
+            continue;
+        }
+        if (!record.discoverable) {
+            continue;
+        }
+        if (record.rp_id_length != request->rp_id_length ||
+            memcmp(record.rp_id, request->rp_id, request->rp_id_length) != 0) {
+            continue;
+        }
+        slot_indices[count++] = slot_index;
+    }
+
+    return count;
+}
+
+static uint8_t respond_with_assertion(const get_assertion_request_t *request,
+                                      uint32_t slot_index,
+                                      bool include_number_of_credentials,
+                                      uint32_t number_of_credentials,
+                                      uint8_t *response,
+                                      size_t *response_length) {
+    meowkey_credential_record_t record;
+    uint8_t auth_data[160];
+    uint8_t extensions[128];
+    size_t extensions_length = sizeof(extensions);
+    size_t auth_data_length = sizeof(auth_data);
+    uint8_t signature[MBEDTLS_ECDSA_MAX_LEN];
+    size_t signature_length = sizeof(signature);
+    uint8_t status;
+
+    if (!meowkey_store_get_credential_by_slot(slot_index, &record)) {
+        return CTAP2_ERR_INVALID_CREDENTIAL;
+    }
+
+    record.sign_count += 1u;
+    status = build_hmac_secret_assertion_extensions(&record, request, extensions, &extensions_length);
+    if (status != CTAP2_STATUS_OK) {
+        meowkey_diag_logf("getAssertion hmac-secret failed status=0x%02x", status);
+        return status;
+    }
+    if (!build_assertion_auth_data(record.rp_id,
+                                   record.rp_id_length,
+                                   record.sign_count,
+                                   extensions,
+                                   extensions_length,
+                                   request->user_verified,
+                                   auth_data,
+                                   &auth_data_length)) {
+        meowkey_diag_logf("getAssertion authData build failed");
+        return CTAP2_ERR_INVALID_CBOR;
+    }
+
+    status = sign_assertion(&record, auth_data, auth_data_length, request->client_data_hash, signature, &signature_length);
+    if (status != CTAP2_STATUS_OK) {
+        meowkey_diag_logf("getAssertion signing failed status=0x%02x", status);
+        return status;
+    }
+
+    if (!meowkey_store_update_sign_count(slot_index, record.sign_count)) {
+        meowkey_diag_logf("getAssertion signCount update failed");
+        return CTAP2_ERR_INVALID_CREDENTIAL;
+    }
+
+    meowkey_diag_logf("getAssertion success rp=%s signCount=%lu slot=%lu",
+                      record.rp_id,
+                      (unsigned long)record.sign_count,
+                      (unsigned long)slot_index);
+
+    return build_get_assertion_response(&record,
+                                        auth_data,
+                                        auth_data_length,
+                                        signature,
+                                        signature_length,
+                                        include_number_of_credentials,
+                                        number_of_credentials,
+                                        response,
+                                        response_length);
 }
 
 uint8_t meowkey_webauthn_make_credential(const uint8_t *request,
@@ -1232,6 +1361,12 @@ uint8_t meowkey_webauthn_make_credential(const uint8_t *request,
     status = parse_make_credential_request(request, request_length, &parsed);
     if (status != CTAP2_STATUS_OK) {
         meowkey_diag_logf("makeCredential rejected status=0x%02x", status);
+        return status;
+    }
+    clear_pending_assertion();
+    status = meowkey_user_presence_wait_for_confirmation("makeCredential");
+    if (status != CTAP2_STATUS_OK) {
+        meowkey_diag_logf("makeCredential userPresence status=0x%02x", status);
         return status;
     }
 
@@ -1271,16 +1406,13 @@ uint8_t meowkey_webauthn_get_assertion(const uint8_t *request,
                                        size_t *response_length) {
     get_assertion_request_t parsed;
     meowkey_credential_record_t record;
-    uint8_t auth_data[160];
-    uint8_t extensions[128];
-    size_t extensions_length = sizeof(extensions);
-    size_t auth_data_length = sizeof(auth_data);
-    uint8_t signature[MBEDTLS_ECDSA_MAX_LEN];
-    size_t signature_length = sizeof(signature);
     uint32_t slot_index = 0u;
+    uint32_t matching_slots[MEOWKEY_PENDING_ASSERTION_MAX_CREDENTIALS];
+    uint32_t matching_count = 0u;
     uint8_t status;
 
     meowkey_store_init();
+    clear_pending_assertion();
     status = parse_get_assertion_request(request, request_length, &parsed);
     if (status != CTAP2_STATUS_OK) {
         meowkey_diag_logf("getAssertion rejected status=0x%02x", status);
@@ -1301,50 +1433,77 @@ uint8_t meowkey_webauthn_get_assertion(const uint8_t *request,
             meowkey_diag_logf("getAssertion rpId mismatch");
             return CTAP2_ERR_INVALID_CREDENTIAL;
         }
-    } else if (!meowkey_store_find_by_rp_id(parsed.rp_id, &record, &slot_index)) {
+        status = meowkey_user_presence_wait_for_confirmation("getAssertion");
+        if (status != CTAP2_STATUS_OK) {
+            meowkey_diag_logf("getAssertion userPresence status=0x%02x", status);
+            return status;
+        }
+        return respond_with_assertion(&parsed, slot_index, false, 0u, response, response_length);
+    }
+
+    matching_count = collect_matching_slots(&parsed, matching_slots, MEOWKEY_PENDING_ASSERTION_MAX_CREDENTIALS);
+    if (matching_count == 0u) {
         meowkey_diag_logf("getAssertion no credential for rp=%s", parsed.rp_id);
         return CTAP2_ERR_NO_CREDENTIALS;
     }
 
-    record.sign_count += 1u;
-    status = build_hmac_secret_assertion_extensions(&record, &parsed, extensions, &extensions_length);
+    status = meowkey_user_presence_wait_for_confirmation("getAssertion");
     if (status != CTAP2_STATUS_OK) {
-        meowkey_diag_logf("getAssertion hmac-secret failed status=0x%02x", status);
+        meowkey_diag_logf("getAssertion userPresence status=0x%02x", status);
         return status;
     }
-    if (!build_assertion_auth_data(record.rp_id,
-                                   record.rp_id_length,
-                                   record.sign_count,
-                                   extensions,
-                                   extensions_length,
-                                   parsed.user_verified,
-                                   auth_data,
-                                   &auth_data_length)) {
-        meowkey_diag_logf("getAssertion authData build failed");
+    status = respond_with_assertion(&parsed,
+                                    matching_slots[0],
+                                    matching_count > 1u,
+                                    matching_count,
+                                    response,
+                                    response_length);
+    if (status != CTAP2_STATUS_OK) {
+        clear_pending_assertion();
+        return status;
+    }
+
+    if (matching_count > 1u) {
+        s_pending_assertion.active = true;
+        s_pending_assertion.request = parsed;
+        memcpy(s_pending_assertion.slot_indices, matching_slots, matching_count * sizeof(matching_slots[0]));
+        s_pending_assertion.credential_count = matching_count;
+        s_pending_assertion.next_index = 1u;
+        s_pending_assertion.last_used_ms = board_millis();
+    }
+    return status;
+}
+
+uint8_t meowkey_webauthn_get_next_assertion(const uint8_t *request,
+                                            size_t request_length,
+                                            uint8_t *response,
+                                            size_t *response_length) {
+    uint8_t status;
+
+    (void)request;
+    if (request_length != 0u) {
         return CTAP2_ERR_INVALID_CBOR;
     }
+    if (!pending_assertion_is_current() || s_pending_assertion.next_index >= s_pending_assertion.credential_count) {
+        clear_pending_assertion();
+        return CTAP2_ERR_NOT_ALLOWED;
+    }
 
-    status = sign_assertion(&record, auth_data, auth_data_length, parsed.client_data_hash, signature, &signature_length);
+    status = respond_with_assertion(&s_pending_assertion.request,
+                                    s_pending_assertion.slot_indices[s_pending_assertion.next_index],
+                                    false,
+                                    0u,
+                                    response,
+                                    response_length);
     if (status != CTAP2_STATUS_OK) {
-        meowkey_diag_logf("getAssertion signing failed status=0x%02x", status);
+        clear_pending_assertion();
         return status;
     }
 
-    if (!meowkey_store_update_sign_count(slot_index, record.sign_count)) {
-        meowkey_diag_logf("getAssertion signCount update failed");
-        return CTAP2_ERR_INVALID_CREDENTIAL;
+    s_pending_assertion.next_index += 1u;
+    s_pending_assertion.last_used_ms = board_millis();
+    if (s_pending_assertion.next_index >= s_pending_assertion.credential_count) {
+        clear_pending_assertion();
     }
-
-    meowkey_diag_logf(
-        "getAssertion success rp=%s signCount=%lu",
-        record.rp_id,
-        (unsigned long)record.sign_count);
-
-    return build_get_assertion_response(&record,
-                                        auth_data,
-                                        auth_data_length,
-                                        signature,
-                                        signature_length,
-                                        response,
-                                        response_length);
+    return CTAP2_STATUS_OK;
 }

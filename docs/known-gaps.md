@@ -4,21 +4,7 @@
 
 ## 1. 协议层缺口
 
-### 1.1 `getAssertion` 只返回第一条凭据
-
-当前 `getAssertion` 在没有 `allowList` 时，会按 RP ID 找到第一条匹配凭据后直接返回。
-
-还没有：
-
-- `numberOfCredentials`
-- `getNextAssertion`
-- 同 RP 多凭据选择策略
-
-影响：
-
-- 一旦同 RP 下存在多条 discoverable credential，行为会和完整 CTAP2 认证器不一致。
-
-### 1.2 凭据管理命令仍缺失
+### 1.1 凭据管理命令仍缺失
 
 固件内部已经能：
 
@@ -32,23 +18,23 @@
 - 枚举全部凭据并带结构化元数据
 - 受权限保护的管理接口
 
-### 1.3 `clientPIN` 仅覆盖最小闭环
+### 1.2 `clientPIN` 仍未覆盖权限模型
 
 当前支持：
 
 - `getRetries`
 - `getKeyAgreement`
 - `setPin`
+- `changePin`
 - `getPinToken`
 
 仍缺：
 
-- `changePin`
 - `getPinTokenWithPermissions`
 - RP 绑定的权限令牌
-- 令牌生命周期和权限校验
+- 更细粒度的权限校验
 
-### 1.4 CTAPHID 控制命令未完整
+### 1.3 CTAPHID 控制命令未完整
 
 未真正实现：
 
@@ -57,45 +43,43 @@
 - `WINK`
 - 更严格的 busy / channel arbitration
 
-### 1.5 Attestation 仍固定为 `none`
+### 1.4 Attestation 仍固定为 `none`
 
 这适合开发期，但不适合需要设备身份链的发行版。
 
 ## 2. 安全面缺口
 
-### 2.1 存储层仍然没有完整掉电一致性
+### 2.1 存储层已经事务化，但还不是量产级 secure storage
 
-第一阶段修复已经把 `signCount` 从主凭据区整区擦写中拆出来，改成独立 journal。
+当前已经有：
+
+- A/B slot
+- 主区 `generation/crc`
+- journal 与主区版本绑定
 
 但当前仍然没有：
 
-- copy-on-write
-- A/B slot
+- 磨损均衡
 - per-record update
-
-更准确地说，现在缺的是“完整事务化存储”，而不是“完全没有任何 journal”。
-
-影响：
-
-- 掉电仍可能破坏主凭据区或造成 journal / 主区状态不一致。
-- 高频断言风险已经下降，但还没到量产级别。
+- 加密或硬件保护的私钥存储
 
 ### 2.2 私钥与 PIN 哈希仍明文落在设备 Flash
 
 这符合当前开发期“先跑通逻辑”的状态，但不等于安全产品已经合格。
 
-### 2.3 没有硬件级用户在场 / 用户验证
+### 2.3 用户在场链路仍是基础版
 
-当前 UV 只等价于：
+当前已经有默认的物理 UP 路径：
 
-- 已设置 PIN
-- 提供了正确的 `pinUvAuthParam`
+- 双击 BOOTSEL
 
-还没有：
+并且已经预留了后续切到外接 GPIO 按键的持久化配置接口。
 
-- 物理按键确认
+但还没有：
+
+- 更强的硬件确认链路
 - 指纹 / 安全元件
-- 独立受信输入链路
+- 完整的 UI 管理入口
 
 ### 2.4 安全启动与回滚保护还没进入量产策略
 
@@ -132,6 +116,6 @@
 ## 4. 当前优先级建议
 
 1. 先把存储层改成更安全的增量更新或双写策略。
-2. 再补 `getNextAssertion` 与多凭据流程。
-3. 然后实现受权限保护的 credential management。
+2. 然后实现受权限保护的 credential management。
+3. 再把 UP/外接按键配置真正接到 UI。
 4. 等协议和升级流程稳定后，再冻结 secure boot / rollback policy。

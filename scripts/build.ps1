@@ -91,8 +91,13 @@ if ($CredentialStoreKB -le 0 -or ($CredentialStoreKB % 4) -ne 0) {
     throw "CredentialStoreKB must be a positive multiple of 4"
 }
 
-if ($CredentialStoreKB -lt 12) {
-    throw "CredentialStoreKB must be at least 12 KB because MeowKey reserves 8 KB for the sign-count journal."
+if ($CredentialStoreKB -lt 16) {
+    throw "CredentialStoreKB must be at least 16 KB because MeowKey reserves 8 KB for the sign-count journal and 8 KB for transactional A/B data slots."
+}
+
+$credentialStoreSectors = [int]($CredentialStoreKB / 4)
+if ((($credentialStoreSectors - 2) % 2) -ne 0) {
+    throw "CredentialStoreKB must leave an even number of data sectors after reserving the 8 KB sign-count journal."
 }
 
 if ($VersionMajor -lt 0 -or $VersionMinor -lt 0 -or $VersionPatch -lt 0) {
@@ -249,7 +254,7 @@ $cmakeArgs = @(
     "-DPICO_NO_PICOTOOL=$(if ($NoPicotool) { 'ON' } else { 'OFF' })",
     "-DPICO_FLASH_SIZE_BYTES=$([int64]$FlashSizeMB * 1MB)",
     "-DMEOWKEY_CREDENTIAL_CAPACITY=$CredentialCapacity",
-    "-DMEOWKEY_CREDENTIAL_STORE_SECTORS=$([int]($CredentialStoreKB / 4))",
+    "-DMEOWKEY_CREDENTIAL_STORE_SECTORS=$credentialStoreSectors",
     "-DMEOWKEY_ENABLE_DEBUG_HID=$(if ($DisableDebugHid) { 'OFF' } else { 'ON' })",
     "-DMEOWKEY_BOARD_ID_MODE=$boardIdModeValue",
     "-DMEOWKEY_BOARD_ID_GPIO_PINS=$BoardIdGpioPins",

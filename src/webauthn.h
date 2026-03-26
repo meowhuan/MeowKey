@@ -14,5 +14,9 @@ uint8_t meowkey_webauthn_get_assertion(const uint8_t *request,
                                        uint8_t *response,
                                        size_t *response_length);
 
-#endif
+uint8_t meowkey_webauthn_get_next_assertion(const uint8_t *request,
+                                            size_t request_length,
+                                            uint8_t *response,
+                                            size_t *response_length);
 
+#endif
