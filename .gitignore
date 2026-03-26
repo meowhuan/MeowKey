@@ -36,3 +36,4 @@ Thumbs.db
 .vscode/
 *.suo
 *.user
+third_party/
