@@ -6,11 +6,13 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "bsp/board_api.h"
 #include "ctap2.h"
 #include "credential_store.h"
 #include "diagnostics.h"
 #include "meowkey_build_config.h"
 #include "tusb.h"
+#include "user_presence.h"
 
 enum {
     CTAP_HID_BROADCAST_CID = 0xFFFFFFFFu,
@@ -28,6 +30,7 @@ enum {
     CTAP_HID_CMD_WINK = 0x08,
     CTAP_HID_CMD_CBOR = 0x10,
     CTAP_HID_CMD_CANCEL = 0x11,
+    CTAP_HID_CMD_KEEPALIVE = 0x3B,
     CTAP_HID_CMD_DIAG = 0x40,
     CTAP_HID_CMD_ERROR = 0x3F,
 };
@@ -43,6 +46,8 @@ enum {
     CTAP_HID_CAPABILITY_CBOR = 0x04,
     CTAP_HID_CAPABILITY_NO_MSG = 0x08,
     CTAP_HID_INTERFACE_COUNT = MEOWKEY_ENABLE_DEBUG_HID ? 2 : 1,
+    CTAP_HID_KEEPALIVE_STATUS_UP_NEEDED = 0x02,
+    CTAP_HID_KEEPALIVE_INTERVAL_MS = 100u,
 };
 
 typedef struct {
@@ -66,8 +71,16 @@ typedef struct {
     uint8_t response_buffer[CTAP_HID_MAX_MESSAGE_SIZE];
 } ctap_hid_interface_state_t;
 
+typedef struct {
+    bool active;
+    uint8_t instance;
+    uint32_t cid;
+    uint32_t last_sent_ms;
+} ctap_hid_keepalive_state_t;
+
 static uint32_t s_next_channel_id = 1u;
 static ctap_hid_interface_state_t s_interfaces[CTAP_HID_INTERFACE_COUNT];
+static ctap_hid_keepalive_state_t s_keepalive;
 
 static const char *interface_name(uint8_t instance) {
 #if MEOWKEY_ENABLE_DEBUG_HID
@@ -86,6 +99,8 @@ static const char *hid_command_name(uint8_t command) {
         return "INIT";
     case CTAP_HID_CMD_CBOR:
         return "CBOR";
+    case CTAP_HID_CMD_KEEPALIVE:
+        return "KEEPALIVE";
     case CTAP_HID_CMD_CANCEL:
         return "CANCEL";
     case CTAP_HID_CMD_DIAG:
@@ -189,6 +204,86 @@ static void write_be32(uint8_t *data, uint32_t value) {
 
 static size_t min_size(size_t a, size_t b) {
     return a < b ? a : b;
+}
+
+static uint16_t read_le16(uint8_t const *data) {
+    return (uint16_t)data[0] | (uint16_t)((uint16_t)data[1] << 8u);
+}
+
+static void send_keepalive_packet(uint8_t instance, uint32_t cid, uint8_t status) {
+    uint8_t packet[CTAP_HID_PACKET_SIZE];
+
+    if (!tud_hid_n_ready(instance)) {
+        return;
+    }
+
+    memset(packet, 0, sizeof(packet));
+    write_be32(packet, cid);
+    packet[4] = (uint8_t)(0x80u | CTAP_HID_CMD_KEEPALIVE);
+    packet[5] = 0x00u;
+    packet[6] = 0x01u;
+    packet[7] = status;
+    tud_hid_n_report(instance, 0, packet, sizeof(packet));
+}
+
+static const char *user_presence_source_name(uint8_t source) {
+    switch (source) {
+    case MEOWKEY_USER_PRESENCE_SOURCE_NONE:
+        return "none";
+    case MEOWKEY_USER_PRESENCE_SOURCE_BOOTSEL:
+        return "bootsel";
+    case MEOWKEY_USER_PRESENCE_SOURCE_GPIO:
+        return "gpio";
+    default:
+        return "unknown";
+    }
+}
+
+static size_t describe_user_presence(char *output, size_t output_capacity) {
+    meowkey_user_presence_config_t config;
+    bool enabled;
+
+    if (output_capacity == 0u) {
+        return 0u;
+    }
+
+    meowkey_user_presence_get_config(&config);
+    enabled = meowkey_user_presence_is_enabled();
+    return (size_t)snprintf(output,
+                            output_capacity,
+                            "{\n"
+                            "  \"enabled\": %s,\n"
+                            "  \"source\": \"%s\",\n"
+                            "  \"gpioPin\": %d,\n"
+                            "  \"gpioActiveLow\": %s,\n"
+                            "  \"tapCount\": %u,\n"
+                            "  \"gestureWindowMs\": %u,\n"
+                            "  \"requestTimeoutMs\": %u\n"
+                            "}\n",
+                            enabled ? "true" : "false",
+                            user_presence_source_name(config.source),
+                            (int)config.gpio_pin,
+                            config.gpio_active_low != 0u ? "true" : "false",
+                            config.tap_count,
+                            (unsigned int)config.gesture_window_ms,
+                            (unsigned int)config.request_timeout_ms);
+}
+
+static bool parse_user_presence_payload(uint8_t const *payload,
+                                        size_t payload_length,
+                                        meowkey_user_presence_config_t *config) {
+    if (payload_length != 9u || config == NULL) {
+        return false;
+    }
+
+    memset(config, 0, sizeof(*config));
+    config->source = payload[1];
+    config->gpio_pin = (int8_t)payload[2];
+    config->gpio_active_low = payload[3];
+    config->tap_count = payload[4];
+    config->gesture_window_ms = read_le16(&payload[5]);
+    config->request_timeout_ms = read_le16(&payload[7]);
+    return true;
 }
 
 static size_t hex_prefix(const uint8_t *data, size_t length, char *output, size_t output_capacity) {
@@ -384,6 +479,17 @@ static void handle_diagnostics(ctap_hid_interface_state_t *state,
     if (action == 2u) {
         meowkey_diag_clear();
         response_length = (size_t)snprintf((char *)response, sizeof(response), "诊断日志已清空。\n");
+    } else if (action == 5u) {
+        response_length = describe_user_presence((char *)response, sizeof(response));
+    } else if (action == 6u) {
+        meowkey_user_presence_config_t config;
+        if (!parse_user_presence_payload(payload, payload_length, &config)) {
+            response_length = (size_t)snprintf((char *)response, sizeof(response), "UP 配置载荷无效。\n");
+        } else if (!meowkey_user_presence_set_config(&config)) {
+            response_length = (size_t)snprintf((char *)response, sizeof(response), "UP 配置保存失败。\n");
+        } else {
+            response_length = describe_user_presence((char *)response, sizeof(response));
+        }
 #if MEOWKEY_ENABLE_DANGEROUS_DEBUG_COMMANDS
     } else if (action == 3u) {
         if (meowkey_store_clear_credentials()) {
@@ -410,10 +516,13 @@ static void handle_cbor(ctap_hid_interface_state_t *state,
     uint8_t response[CTAP_HID_MAX_MESSAGE_SIZE];
     size_t response_length = sizeof(response);
 
+    ctap_hid_keepalive_begin(instance, cid);
     if (!ctap2_handle_cbor(payload, payload_length, response, &response_length)) {
+        ctap_hid_keepalive_end();
         queue_error(state, cid, CTAP_HID_ERR_INVALID_CMD);
         return;
     }
+    ctap_hid_keepalive_end();
 
     if (instance == CTAP_HID_FIDO_INSTANCE && payload_length > 0u) {
         state->seen_cbor = true;
@@ -525,6 +634,38 @@ void ctap_hid_init(void) {
 
 bool ctap_hid_is_configured(void) {
     return s_interfaces[CTAP_HID_FIDO_INSTANCE].seen_cbor;
+}
+
+void ctap_hid_keepalive_begin(uint8_t instance, uint32_t cid) {
+    if (instance >= CTAP_HID_INTERFACE_COUNT) {
+        return;
+    }
+
+    s_keepalive.active = true;
+    s_keepalive.instance = instance;
+    s_keepalive.cid = cid;
+    s_keepalive.last_sent_ms = 0u;
+}
+
+void ctap_hid_keepalive_end(void) {
+    memset(&s_keepalive, 0, sizeof(s_keepalive));
+}
+
+void ctap_hid_keepalive_up_needed(void) {
+    uint32_t now_ms;
+
+    if (!s_keepalive.active) {
+        return;
+    }
+
+    now_ms = board_millis();
+    if (s_keepalive.last_sent_ms != 0u &&
+        (now_ms - s_keepalive.last_sent_ms) < CTAP_HID_KEEPALIVE_INTERVAL_MS) {
+        return;
+    }
+
+    send_keepalive_packet(s_keepalive.instance, s_keepalive.cid, CTAP_HID_KEEPALIVE_STATUS_UP_NEEDED);
+    s_keepalive.last_sent_ms = now_ms;
 }
 
 void ctap_hid_task(void) {

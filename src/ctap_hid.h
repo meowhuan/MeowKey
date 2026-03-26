@@ -15,5 +15,8 @@ void ctap_hid_task(void);
 void ctap_hid_handle_report(uint8_t instance, uint8_t const *report, size_t report_length);
 
 bool ctap_hid_is_configured(void);
+void ctap_hid_keepalive_begin(uint8_t instance, uint32_t cid);
+void ctap_hid_keepalive_end(void);
+void ctap_hid_keepalive_up_needed(void);
 
 #endif

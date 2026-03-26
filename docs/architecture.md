@@ -94,7 +94,8 @@ USB 接收到 HID 输出报文后，流程是：
 
 - 所有已创建凭据都会被当作 discoverable credential 存储。
 - `getAssertion` 无 `allowList` 且命中多条 discoverable credential 时，会返回 `numberOfCredentials` 并允许继续走 `getNextAssertion`。
-- 当前默认会在注册和断言时要求一次真实的物理用户在场确认。
+- 当前已经支持可配置的 UP 源。
+- 对当前 `meowkey_rp2350_usb` 板卡，默认不会把 `BOOTSEL` 当运行时 UP；默认是无物理确认的兼容模式，后续若有独立按键再切到 GPIO。
 - attestation 仍固定为 `"none"`。
 
 ## 7. Client PIN
@@ -114,9 +115,10 @@ USB 接收到 HID 输出报文后，流程是：
 当前实现的几个边界：
 
 - `pinUvAuthToken` 是运行时令牌，不会持久化到 Flash。
-- `pinUvAuthToken` 现在是短生命周期的一次性令牌，用完或超时后失效。
+- `pinUvAuthToken` 现在是短生命周期令牌，超时后失效。
 - `pinHash` 和重试计数仍持久化在 Flash。
 - token 权限范围没有实现，因此直接拒绝权限 token 子命令。
+- UP 配置已经有持久化接口，也预留了调试 HID 读写入口，但桌面 UI 还没接上。
 
 ## 8. 凭据存储
 

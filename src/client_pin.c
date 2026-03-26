@@ -41,7 +41,6 @@ enum {
     CLIENT_PIN_TOKEN_SIZE = 32,
     CLIENT_PIN_HASH_SIZE = 16,
     CLIENT_PIN_TOKEN_LIFETIME_MS = 30000u,
-    CLIENT_PIN_TOKEN_MAX_USES = 1u,
 };
 
 typedef struct {
@@ -70,7 +69,6 @@ static uint8_t s_key_agreement_public[65];
 static bool s_runtime_pin_token_ready = false;
 static uint8_t s_runtime_pin_token[CLIENT_PIN_TOKEN_SIZE];
 static uint32_t s_runtime_pin_token_issued_at_ms = 0u;
-static uint8_t s_runtime_pin_token_remaining_uses = 0u;
 
 static int client_pin_random(void *context, unsigned char *output, size_t output_length) {
     (void)context;
@@ -106,14 +104,12 @@ static void clear_runtime_pin_token(void) {
     secure_zero(s_runtime_pin_token, sizeof(s_runtime_pin_token));
     s_runtime_pin_token_ready = false;
     s_runtime_pin_token_issued_at_ms = 0u;
-    s_runtime_pin_token_remaining_uses = 0u;
 }
 
 static bool rotate_runtime_pin_token(void) {
     client_pin_random(NULL, s_runtime_pin_token, sizeof(s_runtime_pin_token));
     s_runtime_pin_token_ready = true;
     s_runtime_pin_token_issued_at_ms = board_millis();
-    s_runtime_pin_token_remaining_uses = CLIENT_PIN_TOKEN_MAX_USES;
     return true;
 }
 
@@ -121,21 +117,11 @@ static bool runtime_pin_token_is_usable(void) {
     if (!s_runtime_pin_token_ready) {
         return false;
     }
-    if ((board_millis() - s_runtime_pin_token_issued_at_ms) > CLIENT_PIN_TOKEN_LIFETIME_MS ||
-        s_runtime_pin_token_remaining_uses == 0u) {
+    if ((board_millis() - s_runtime_pin_token_issued_at_ms) > CLIENT_PIN_TOKEN_LIFETIME_MS) {
         clear_runtime_pin_token();
         return false;
     }
     return true;
-}
-
-static void consume_runtime_pin_token_use(void) {
-    if (s_runtime_pin_token_remaining_uses > 0u) {
-        s_runtime_pin_token_remaining_uses -= 1u;
-    }
-    if (s_runtime_pin_token_remaining_uses == 0u) {
-        clear_runtime_pin_token();
-    }
 }
 
 static bool sha256_bytes(const uint8_t *data, size_t length, uint8_t output[32]) {
@@ -808,7 +794,6 @@ uint8_t meowkey_client_pin_verify_auth(const uint8_t client_data_hash[32],
         meowkey_diag_logf("pinUvAuth invalid");
         return CTAP2_ERR_PIN_AUTH_INVALID;
     }
-    consume_runtime_pin_token_use();
     return CTAP2_STATUS_OK;
 }
 

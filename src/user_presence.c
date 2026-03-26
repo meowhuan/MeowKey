@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "bsp/board_api.h"
+#include "ctap_hid.h"
 #include "diagnostics.h"
 #include "hardware/gpio.h"
 #include "meowkey_build_config.h"
@@ -130,8 +131,8 @@ uint8_t meowkey_user_presence_wait_for_confirmation(const char *reason) {
 
     cache_config_if_needed();
     if (s_cached_config.source == MEOWKEY_USER_PRESENCE_SOURCE_NONE) {
-        meowkey_diag_logf("userPresence disabled for %s", reason != NULL ? reason : "operation");
-        return CTAP2_ERR_UNSUPPORTED_OPTION;
+        meowkey_diag_logf("userPresence bypassed for %s", reason != NULL ? reason : "operation");
+        return CTAP2_STATUS_OK;
     }
 
     start_ms = board_millis();
@@ -144,6 +145,8 @@ uint8_t meowkey_user_presence_wait_for_confirmation(const char *reason) {
     while (elapsed_ms(start_ms, board_millis()) < s_cached_config.request_timeout_ms) {
         uint32_t now_ms = board_millis();
         bool pressed = read_presence_signal(&s_cached_config);
+
+        ctap_hid_keepalive_up_needed();
 
         if (pressed && !last_pressed) {
             if (s_cached_config.tap_count <= 1u) {

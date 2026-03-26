@@ -7,6 +7,14 @@ param(
     [int]$CredentialStoreKB = 64,
     [switch]$DisableDebugHid,
     [switch]$Probe,
+    [ValidateSet("none", "bootsel", "gpio")]
+    [string]$UserPresenceSource = "none",
+    [int]$UserPresenceGpioPin = -1,
+    [ValidateSet("low", "high")]
+    [string]$UserPresenceGpioActiveState = "low",
+    [int]$UserPresenceTapCount = 2,
+    [int]$UserPresenceGestureWindowMs = 750,
+    [int]$UserPresenceTimeoutMs = 8000,
     [ValidateSet("none", "gpio", "i2c-eeprom")]
     [string]$BoardIdMode = "none",
     [string]$BoardIdGpioPins = "",
@@ -102,6 +110,22 @@ if ((($credentialStoreSectors - 2) % 2) -ne 0) {
 
 if ($VersionMajor -lt 0 -or $VersionMinor -lt 0 -or $VersionPatch -lt 0) {
     throw "VersionMajor, VersionMinor, and VersionPatch must be 0 or greater"
+}
+
+if ($UserPresenceTapCount -lt 1 -or $UserPresenceTapCount -gt 4) {
+    throw "UserPresenceTapCount must be between 1 and 4"
+}
+
+if ($UserPresenceGestureWindowMs -lt 100 -or $UserPresenceGestureWindowMs -gt 5000) {
+    throw "UserPresenceGestureWindowMs must be between 100 and 5000"
+}
+
+if ($UserPresenceTimeoutMs -lt 500 -or $UserPresenceTimeoutMs -gt 30000) {
+    throw "UserPresenceTimeoutMs must be between 500 and 30000"
+}
+
+if ($UserPresenceSource -eq "gpio" -and $UserPresenceGpioPin -lt 0) {
+    throw "UserPresenceGpioPin must be >= 0 when UserPresenceSource=gpio"
 }
 
 if ($BoardIdI2cMemAddressWidth -lt 1 -or $BoardIdI2cMemAddressWidth -gt 2) {
@@ -256,6 +280,12 @@ $cmakeArgs = @(
     "-DMEOWKEY_CREDENTIAL_CAPACITY=$CredentialCapacity",
     "-DMEOWKEY_CREDENTIAL_STORE_SECTORS=$credentialStoreSectors",
     "-DMEOWKEY_ENABLE_DEBUG_HID=$(if ($DisableDebugHid) { 'OFF' } else { 'ON' })",
+    "-DMEOWKEY_UP_DEFAULT_SOURCE=$UserPresenceSource",
+    "-DMEOWKEY_UP_GPIO_PIN=$UserPresenceGpioPin",
+    "-DMEOWKEY_UP_GPIO_ACTIVE_LOW=$(if ($UserPresenceGpioActiveState -eq 'low') { 'ON' } else { 'OFF' })",
+    "-DMEOWKEY_UP_TAP_COUNT=$UserPresenceTapCount",
+    "-DMEOWKEY_UP_GESTURE_WINDOW_MS=$UserPresenceGestureWindowMs",
+    "-DMEOWKEY_UP_REQUEST_TIMEOUT_MS=$UserPresenceTimeoutMs",
     "-DMEOWKEY_BOARD_ID_MODE=$boardIdModeValue",
     "-DMEOWKEY_BOARD_ID_GPIO_PINS=$BoardIdGpioPins",
     "-DMEOWKEY_BOARD_ID_GPIO_ACTIVE_LOW=$(if ($BoardIdGpioActiveState -eq 'low') { 'ON' } else { 'OFF' })",

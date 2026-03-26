@@ -42,6 +42,18 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -Preset custom-base
   凭据存储区域大小，必须是 `4 KB` 的整数倍，且当前至少为 `16 KB`；扣掉 `8 KB` journal 后剩余数据区会按 A/B 事务槽均分。
 - `-DisableDebugHid`
   关闭 Debug HID，仅保留标准 FIDO HID。
+- `-UserPresenceSource`
+  `none | bootsel | gpio`。当前 `meowkey_rp2350_usb` 默认是 `none`；这表示保留协议兼容性，但跳过物理确认。不建议把 `BOOTSEL` 当运行时 UP。
+- `-UserPresenceGpioPin`
+  当 `-UserPresenceSource gpio` 时指定按键引脚。
+- `-UserPresenceGpioActiveState`
+  `low | high`。
+- `-UserPresenceTapCount`
+  需要的点击次数。
+- `-UserPresenceGestureWindowMs`
+  多击判定窗口。
+- `-UserPresenceTimeoutMs`
+  一次 UP 请求的超时。
 - `-Probe`
   构建单独的板卡探测固件 `meowkey_probe`。
 - `-BoardIdMode`
@@ -133,6 +145,7 @@ cargo run
 - 这两个调试工具都依赖 Debug HID。
 - 若使用 `-DisableDebugHid` 构建，调试工具会失去设备访问能力。
 - `probe` 固件不使用 Debug HID，而是通过 USB 串口输出 JSON 探测报告。
+- 当前 `meowkey_rp2350_usb` 不建议把 `BOOTSEL` 作为运行时 UP 输入；如果没有独立按键，建议保持 `-UserPresenceSource none`。
 
 ## 7. Probe 固件与 preset 草案
 

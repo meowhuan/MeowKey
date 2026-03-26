@@ -35,12 +35,10 @@ static void ctap2_write_status_only(uint8_t status,
 static uint8_t ctap2_build_get_info(uint8_t *response, size_t *response_length) {
     meowkey_cbor_writer_t writer;
     meowkey_pin_state_t pin_state;
-    bool user_presence_enabled;
 
     meowkey_store_init();
     meowkey_user_presence_init();
     meowkey_store_get_pin_state(&pin_state);
-    user_presence_enabled = meowkey_user_presence_is_enabled();
     meowkey_cbor_writer_init(&writer, response, *response_length);
 
     meowkey_cbor_write_map_start(&writer, 8u);
@@ -60,7 +58,7 @@ static uint8_t ctap2_build_get_info(uint8_t *response, size_t *response_length) 
     meowkey_cbor_write_text(&writer, "rk", 2u);
     meowkey_cbor_write_bool(&writer, true);
     meowkey_cbor_write_text(&writer, "up", 2u);
-    meowkey_cbor_write_bool(&writer, user_presence_enabled);
+    meowkey_cbor_write_bool(&writer, true);
     meowkey_cbor_write_text(&writer, "uv", 2u);
     meowkey_cbor_write_bool(&writer, false);
     meowkey_cbor_write_text(&writer, "plat", 4u);

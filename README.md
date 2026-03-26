@@ -209,7 +209,10 @@ GitHub Actions 的 release 工作流会产出这三类变体。
 - 硬化构建已经支持关闭 Debug HID。
 - 现在已经有单独的 `probe` 固件与 `scripts/probe-board.ps1`，用于生成 preset 草案。
 - `clientPIN` 现在只保留不带权限范围的旧式 `getPinToken` 路径；`getPinTokenWithPermissions` 仍未实现。
-- 运行时 `pinUvAuthToken` 不会持久化到 Flash，并且现在是短生命周期的一次性令牌。
+- 运行时 `pinUvAuthToken` 不会持久化到 Flash，并且现在是短生命周期令牌。
+- 当前这块 `meowkey_rp2350_usb` 板卡不默认把 `BOOTSEL` 当运行时 UP 输入，因为它挂在 Flash `CS` 上，按下时会干扰正在运行的固件。
+- 默认构建会保留协议兼容性，但在未配置独立按键时走“无物理确认”的兼容模式。
+- 如果后续底板接入了专用按键，建议把 UP 源切到独立 GPIO；若硬件上无法稳定提供真实 UP，也允许继续关闭物理确认，相关固件配置接口已经预留，后续 UI 可直接对接。
 - `signCount` 已经从主凭据区整区重写路径中拆出，改为单独 journal 持久化；但这还不是最终的掉电安全存储方案。
 
 如果你要做真正的发行，请先看完 [docs/security.md](docs/security.md) 和 [docs/release.md](docs/release.md)。
