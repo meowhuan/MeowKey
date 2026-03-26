@@ -4,11 +4,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
-    inputs:
-      version_tag:
-        description: "Release tag, for example v0.2.0"
-        required: true
 
 permissions:
   contents: write
@@ -18,17 +13,13 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       PICOTOOL_FETCH_DIR: ${{ github.workspace }}/.cache/picotool-release
-      PICO_SDK_CI_PATH: ${{ runner.temp }}/pico-sdk
+      PICO_SDK_CI_PATH: ${{ github.workspace }}/.cache/pico-sdk-release
     steps:
       - uses: actions/checkout@v4
 
       - name: Resolve release tag
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "RELEASE_TAG=${{ inputs.version_tag }}" >> "$GITHUB_ENV"
-          else
-            echo "RELEASE_TAG=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
-          fi
+          echo "RELEASE_TAG=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
 
       - name: Parse version
         run: |
