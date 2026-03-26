@@ -28,6 +28,8 @@
 
 /native/**/bin/
 /native/**/obj/
+/windows/**/bin/
+/windows/**/obj/
 /native-rs/**/target/
 
 .DS_Store

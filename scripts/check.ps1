@@ -14,7 +14,7 @@ $boardPresetsPath = Join-Path $PSScriptRoot "board-presets.json"
 $guiServerPath = Join-Path $PSScriptRoot "gui_server.py"
 $probeScriptPath = Join-Path $PSScriptRoot "probe-board.ps1"
 $cargoManifestPath = Join-Path $projectRoot "native-rs\meowkey-manager\Cargo.toml"
-$wpfProjectPath = Join-Path $projectRoot "native\MeowKey.Manager\MeowKey.Manager.csproj"
+$winUiProjectPath = Join-Path $projectRoot "windows\gui\MeowKey.Manager\MeowKey.Manager.csproj"
 
 Write-Host "[check] validating board presets JSON"
 $presets = Get-Content -Path $boardPresetsPath -Raw | ConvertFrom-Json
@@ -104,8 +104,8 @@ if (-not $SkipDesktop) {
     Write-Host "[check] cargo check"
     cargo check --locked --manifest-path $cargoManifestPath
 
-    Write-Host "[check] dotnet build"
-    dotnet build $wpfProjectPath -c Release -p:ContinuousIntegrationBuild=true
+    Write-Host "[check] dotnet build WinUI manager"
+    dotnet build $winUiProjectPath -c Release -p:ContinuousIntegrationBuild=true
 }
 
 Write-Host "[check] all checks passed"

@@ -19,7 +19,8 @@ The current tree already includes:
 - Sign-count journal persistence
 - Board ID probing
 - Browser WebHID debug UI
-- Rust native debug manager
+- WinUI 3 Windows manager shell
+- Rust / egui Linux manager shell
 
 ### Project Focus
 
@@ -80,7 +81,7 @@ Notes:
 - Keep `-IgnoreGitGlobalConfig` if your machine has a broken global proxy setup.
 - Release archives also include `flash.ps1` and `flash.sh`.
 
-### Debug Tools
+### Desktop Apps and Debug Tools
 
 Browser debug UI:
 
@@ -90,14 +91,20 @@ powershell -ExecutionPolicy Bypass -File .\scripts\gui.ps1
 
 Then open `http://127.0.0.1:8765` in a Chromium-based browser.
 
-Rust debug manager:
+Windows manager shell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-manager.ps1 -Configuration Release
+```
+
+Linux-facing Rust manager shell:
 
 ```powershell
 cd .\native-rs\meowkey-manager
 cargo run
 ```
 
-Both tools depend on Debug HID. They are for local bring-up and protocol inspection, not for normal end-user authentication flows.
+The browser UI and the Rust shell still depend on Debug HID. The WinUI shell is now the primary Windows manager surface, but it still reflects the current protocol boundary instead of pretending that full end-user credential administration already exists.
 
 ### Probe and Presets
 
@@ -147,7 +154,7 @@ Treat the preset name as the real long-term identifier. The shopping link is onl
 - [CONTRIBUTING.md](CONTRIBUTING.md): contribution workflow
 - [SECURITY.md](SECURITY.md): reporting policy
 - [keys/README.md](keys/README.md): local secure-boot key directory
-- [native-rs/meowkey-manager/README.md](native-rs/meowkey-manager/README.md): Rust debug manager
+- [native-rs/meowkey-manager/README.md](native-rs/meowkey-manager/README.md): Rust Linux manager shell and maintenance workbench
 
 ### Repository Layout
 
@@ -156,14 +163,16 @@ Treat the preset name as the real long-term identifier. The shopping link is onl
 - `scripts/`: build, flash, GUI, probe, and local checks
 - `docs/`: architecture, build, release, and security docs
 - `gui/`: browser WebHID debug UI
-- `native-rs/meowkey-manager/`: Rust / egui debug manager
-- `native/`: early WPF prototype
+- `windows/gui/MeowKey.Manager/`: WinUI 3 Windows manager shell
+- `native-rs/meowkey-manager/`: Rust / egui Linux manager shell
 - `third_party/pico-sdk/`: bundled Pico SDK
 
 ### Current Practical Facts
 
 - Debug builds expose Debug HID and can read logs, inspect state, and modify user-presence behavior.
 - Hardened builds disable Debug HID and are the better default for redistribution.
+- The Windows desktop manager now lives in `windows/gui/MeowKey.Manager/` and is organized around management sections instead of protocol test panels.
+- The Linux desktop surface currently stays on Rust + egui/eframe so the existing cross-platform backend can keep moving without a second native toolkit migration.
 - `clientPIN` currently implements the older `getPinToken` flow, not permission-scoped tokens.
 - Runtime `pinUvAuthToken` is session-only and short-lived.
 - The default `meowkey_rp2350_usb` user-presence source is `BOOTSEL` with a double-tap gesture.
@@ -191,7 +200,8 @@ MeowKey 是一个面向 `RP2350` 的 passkey / CTAP2 固件项目，文档和发
 - 单独的签名计数 journal
 - 板卡 ID 探测
 - 浏览器 WebHID 调试界面
-- Rust 原生调试管理器
+- WinUI 3 Windows 管理器壳层
+- Rust / egui Linux 管理器壳层
 
 ### 项目主旨
 
@@ -252,7 +262,7 @@ Linux 刷写：
 - 如果你的全局 Git 代理配置有问题，继续保留 `-IgnoreGitGlobalConfig`。
 - release 压缩包里同样会附带 `flash.ps1` 与 `flash.sh`。
 
-### 调试工具
+### 桌面应用与调试工具
 
 浏览器调试台：
 
@@ -262,14 +272,20 @@ powershell -ExecutionPolicy Bypass -File .\scripts\gui.ps1
 
 然后用 Chromium 内核浏览器打开 `http://127.0.0.1:8765`。
 
-Rust 原生调试管理器：
+Windows 管理器壳层：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-manager.ps1 -Configuration Release
+```
+
+Linux 侧 Rust 管理器壳层：
 
 ```powershell
 cd .\native-rs\meowkey-manager
 cargo run
 ```
 
-这两个工具都依赖 Debug HID，更适合本地 bring-up、协议联调和状态检查，不是面向普通终端用户的常规认证入口。
+浏览器调试台和 Rust 壳层仍然依赖 Debug HID，更适合 bring-up、维护和状态检查。WinUI 壳层现在是 Windows 主管理界面，但它会如实反映当前协议边界，不会把尚未实现的凭据管理能力包装成“已经可用”。
 
 ### Probe 与预设
 
@@ -319,7 +335,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1
 - [CONTRIBUTING.md](CONTRIBUTING.md)：协作与提交前检查
 - [SECURITY.md](SECURITY.md)：安全问题报告方式
 - [keys/README.md](keys/README.md)：本地 secure boot 密钥目录
-- [native-rs/meowkey-manager/README.md](native-rs/meowkey-manager/README.md)：Rust 调试管理器说明
+- [native-rs/meowkey-manager/README.md](native-rs/meowkey-manager/README.md)：Rust Linux 管理器壳层与维护工作台说明
 
 ### 仓库结构
 
@@ -328,14 +344,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1
 - `scripts/`：构建、刷写、GUI、probe 和本地检查脚本
 - `docs/`：架构、构建、发布、安全文档
 - `gui/`：浏览器 WebHID 调试界面
-- `native-rs/meowkey-manager/`：Rust / egui 调试管理器
-- `native/`：早期 WPF 原型
+- `windows/gui/MeowKey.Manager/`：WinUI 3 Windows 管理器壳层
+- `native-rs/meowkey-manager/`：Rust / egui Linux 管理器壳层
 - `third_party/pico-sdk/`：内置 Pico SDK
 
 ### 当前最重要的事实
 
 - `debug` 构建会暴露 Debug HID，主机可以读取日志、观察状态并改写 user presence 行为。
 - `hardened` 构建会关闭 Debug HID，更适合作为分发基线。
+- Windows 桌面管理器现在位于 `windows/gui/MeowKey.Manager/`，信息架构已经按真正管理器而不是协议测试面板来组织。
+- Linux 桌面面暂时继续使用 Rust + egui/eframe，这样可以复用现有跨平台后端并避免再引入一套新的原生桌面栈。
 - `clientPIN` 当前只实现旧式 `getPinToken`，没有权限范围 token。
 - 运行时 `pinUvAuthToken` 只存在于当前会话，且生命周期较短。
 - `meowkey_rp2350_usb` 当前默认的 user presence 来源是双击 `BOOTSEL`。

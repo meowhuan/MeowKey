@@ -117,5 +117,5 @@ jobs:
           '@ | Set-Content -Path $temp -Encoding utf8
           powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1 -InputPath $temp | Out-Null
 
-      - name: Build WPF prototype
-        run: dotnet build native/MeowKey.Manager/MeowKey.Manager.csproj -c Release -p:ContinuousIntegrationBuild=true
+      - name: Build WinUI manager
+        run: dotnet build windows/gui/MeowKey.Manager/MeowKey.Manager.csproj -c Release -p:ContinuousIntegrationBuild=true

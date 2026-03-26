@@ -1,0 +1,129 @@
+<Page
+    x:Class="MeowKey.Manager.Pages.DashboardPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:models="using:MeowKey.Manager.Models">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Spacing="12" Padding="0,0,0,12">
+            <Border Style="{StaticResource SectionCardStyle}">
+                <Grid ColumnSpacing="18">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Spacing="8">
+                        <TextBlock x:Name="PageTitleText" FontSize="20" FontWeight="SemiBold" />
+                        <TextBlock x:Name="PageDescription1Text"
+                                   Foreground="{ThemeResource AppMutedForegroundBrush}"
+                                   TextWrapping="WrapWholeWords" />
+                        <TextBlock x:Name="PageDescription2Text"
+                                   TextWrapping="WrapWholeWords" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1"
+                                Orientation="Horizontal"
+                                Spacing="8"
+                                VerticalAlignment="Top">
+                        <Button x:Name="PreferHardenedBaselineButton"
+                                Click="OnPreferHardenedBaseline" />
+                        <Button x:Name="ConfirmLinuxSurfaceButton"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Click="OnConfirmLinuxSurface" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0" Style="{StaticResource SectionCardStyle}">
+                    <StackPanel Spacing="12">
+                        <TextBlock x:Name="ReadinessTitleText" FontSize="18" FontWeight="SemiBold" />
+                        <TextBlock x:Name="ReadinessDescriptionText"
+                                   Foreground="{ThemeResource AppMutedForegroundBrush}"
+                                   TextWrapping="WrapWholeWords" />
+                        <ItemsControl ItemsSource="{x:Bind Snapshot.DashboardReadiness}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="models:ReadinessItem">
+                                    <Border Style="{StaticResource SurfaceCardStyle}" Margin="0,0,0,8">
+                                        <StackPanel Spacing="6">
+                                            <TextBlock Text="{x:Bind Status}"
+                                                       Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                                            <TextBlock Text="{x:Bind Title}" FontWeight="SemiBold" />
+                                            <TextBlock Text="{x:Bind Detail}"
+                                                       Foreground="{ThemeResource AppMutedForegroundBrush}"
+                                                       TextWrapping="WrapWholeWords" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="1" Style="{StaticResource SectionCardStyle}">
+                    <StackPanel Spacing="12">
+                        <TextBlock x:Name="PlatformTitleText" FontSize="18" FontWeight="SemiBold" />
+                        <TextBlock x:Name="PlatformDescriptionText"
+                                   Foreground="{ThemeResource AppMutedForegroundBrush}"
+                                   TextWrapping="WrapWholeWords" />
+                        <ItemsControl ItemsSource="{x:Bind Snapshot.PlatformChoices}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="models:PlatformChoice">
+                                    <Border Style="{StaticResource SurfaceCardStyle}" Margin="0,0,0,8">
+                                        <StackPanel Spacing="6">
+                                            <TextBlock Text="{x:Bind Platform}"
+                                                       Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                                            <TextBlock Text="{x:Bind Toolkit}" FontWeight="SemiBold" />
+                                            <TextBlock Text="{x:Bind Detail}"
+                                                       Foreground="{ThemeResource AppMutedForegroundBrush}"
+                                                       TextWrapping="WrapWholeWords" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <Border Style="{StaticResource SectionCardStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock x:Name="BoundaryTitleText" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock x:Name="BoundaryDescriptionText"
+                               Foreground="{ThemeResource AppMutedForegroundBrush}"
+                               TextWrapping="WrapWholeWords" />
+
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0" Style="{StaticResource SurfaceCardStyle}">
+                            <StackPanel Spacing="6">
+                                <TextBlock x:Name="NowTitleText" FontWeight="SemiBold" />
+                                <TextBlock x:Name="NowLine1Text" />
+                                <TextBlock x:Name="NowLine2Text" />
+                                <TextBlock x:Name="NowLine3Text" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="1" Style="{StaticResource SurfaceCardStyle}">
+                            <StackPanel Spacing="6">
+                                <TextBlock x:Name="NextTitleText" FontWeight="SemiBold" />
+                                <TextBlock x:Name="NextLine1Text" />
+                                <TextBlock x:Name="NextLine2Text" />
+                                <TextBlock x:Name="NextLine3Text" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

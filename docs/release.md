@@ -19,7 +19,7 @@ Desktop-side checks on Windows:
 
 - `scripts/probe-board.ps1` sample-input smoke test
 - `cargo check --locked --manifest-path native-rs/meowkey-manager/Cargo.toml`
-- `dotnet build native/MeowKey.Manager/MeowKey.Manager.csproj -c Release`
+- `dotnet build windows/gui/MeowKey.Manager/MeowKey.Manager.csproj -c Release`
 
 ### 2. Why CI Does Not Use `build.ps1`
 
@@ -56,7 +56,14 @@ The current GitHub Actions release workflow expects the environment secret:
 
 - `MEOWKEY_SECUREBOOT_PEM_B64`
 
-That value must be the base64-encoded contents of the PEM signing key. The workflow decodes it into `${{ github.workspace }}/.cache/meowkey-secureboot.pem` and then enables the secure-boot-ready package set. Do not keep this as a repository-wide secret if you want release-environment protection rules to apply.
+That value must be the base64-encoded contents of an `RSA` or `EC` private key in PEM form. The workflow decodes it into `${{ github.workspace }}/.cache/meowkey-secureboot.pem`, validates that the key is `RSA` or `EC`, and then enables the secure-boot-ready package set. Do not keep this as a repository-wide secret if you want release-environment protection rules to apply.
+
+Example commands:
+
+```bash
+openssl ecparam -name secp256k1 -genkey -noout -out meowkey-secureboot.pem
+base64 -w 0 meowkey-secureboot.pem
+```
 
 ### 5. Release Contents
 
@@ -157,7 +164,7 @@ Windows 上的桌面工具检查：
 
 - `scripts/probe-board.ps1` 样例输入冒烟测试
 - `cargo check --locked --manifest-path native-rs/meowkey-manager/Cargo.toml`
-- `dotnet build native/MeowKey.Manager/MeowKey.Manager.csproj -c Release`
+- `dotnet build windows/gui/MeowKey.Manager/MeowKey.Manager.csproj -c Release`
 
 ### 2. 为什么 CI 不直接用 `build.ps1`
 
@@ -194,7 +201,14 @@ Windows 上的桌面工具检查：
 
 - `MEOWKEY_SECUREBOOT_PEM_B64`
 
-它的值需要是 PEM 签名私钥内容的 base64 编码。workflow 会先把它解码到 `${{ github.workspace }}/.cache/meowkey-secureboot.pem`，然后才会启用 secure-boot-ready 这一组发布包。如果你希望 release 环境的审批或访问控制真正生效，就不应把它继续保留为仓库级 secret。
+它的值需要是 `RSA` 或 `EC` 私钥 PEM 内容的 base64 编码。workflow 会先把它解码到 `${{ github.workspace }}/.cache/meowkey-secureboot.pem`，校验算法确实属于 `RSA` 或 `EC`，然后才会启用 secure-boot-ready 这一组发布包。如果你希望 release 环境的审批或访问控制真正生效，就不应把它继续保留为仓库级 secret。
+
+示例命令：
+
+```bash
+openssl ecparam -name secp256k1 -genkey -noout -out meowkey-secureboot.pem
+base64 -w 0 meowkey-secureboot.pem
+```
 
 ### 5. 发布包内容
 

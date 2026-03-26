@@ -1,0 +1,158 @@
+using System.Globalization;
+
+namespace MeowKey.Manager.Models;
+
+public sealed class SummaryCard
+{
+    public SummaryCard(string label, string value, string detail)
+    {
+        Label = label;
+        Value = value;
+        Detail = detail;
+    }
+
+    public string Label { get; }
+    public string Value { get; }
+    public string Detail { get; }
+}
+
+public sealed class ReadinessItem
+{
+    public ReadinessItem(string status, string title, string detail)
+    {
+        Status = status;
+        Title = title;
+        Detail = detail;
+    }
+
+    public string Status { get; }
+    public string Title { get; }
+    public string Detail { get; }
+}
+
+public sealed class PlatformChoice
+{
+    public PlatformChoice(string platform, string toolkit, string detail)
+    {
+        Platform = platform;
+        Toolkit = toolkit;
+        Detail = detail;
+    }
+
+    public string Platform { get; }
+    public string Toolkit { get; }
+    public string Detail { get; }
+}
+
+public sealed class DeviceEntry
+{
+    public DeviceEntry(
+        string name,
+        string role,
+        string firmwareLabel,
+        string firmware,
+        string boardLabel,
+        string board,
+        string transportLabel,
+        string transport,
+        string state,
+        string detail)
+    {
+        Name = name;
+        Role = role;
+        FirmwareLabel = firmwareLabel;
+        Firmware = firmware;
+        BoardLabel = boardLabel;
+        Board = board;
+        TransportLabel = transportLabel;
+        Transport = transport;
+        State = state;
+        Detail = detail;
+    }
+
+    public string Name { get; }
+    public string Role { get; }
+    public string FirmwareLabel { get; }
+    public string Firmware { get; }
+    public string BoardLabel { get; }
+    public string Board { get; }
+    public string TransportLabel { get; }
+    public string Transport { get; }
+    public string State { get; }
+    public string Detail { get; }
+}
+
+public sealed class CapabilityItem
+{
+    public CapabilityItem(string name, string status, string detail)
+    {
+        Name = name;
+        Status = status;
+        Detail = detail;
+    }
+
+    public string Name { get; }
+    public string Status { get; }
+    public string Detail { get; }
+}
+
+public sealed class PolicyItem
+{
+    public PolicyItem(string title, string value, string detail)
+    {
+        Title = title;
+        Value = value;
+        Detail = detail;
+    }
+
+    public string Title { get; }
+    public string Value { get; }
+    public string Detail { get; }
+}
+
+public sealed class MaintenanceCommand
+{
+    public MaintenanceCommand(string label, string command, string detail)
+    {
+        Label = label;
+        Command = command;
+        Detail = detail;
+    }
+
+    public string Label { get; }
+    public string Command { get; }
+    public string Detail { get; }
+}
+
+public sealed class ActivityEntry
+{
+    public ActivityEntry(DateTime timestamp, string category, string message)
+    {
+        Timestamp = timestamp;
+        Category = category;
+        Message = message;
+    }
+
+    public DateTime Timestamp { get; }
+    public string TimestampText => Timestamp.ToString("g", CultureInfo.CurrentUICulture);
+    public string Category { get; }
+    public string Message { get; }
+}
+
+public sealed class ManagerSnapshot
+{
+    public string ProductName { get; init; } = string.Empty;
+    public string WindowSubtitle { get; init; } = string.Empty;
+    public string VersionLabel { get; init; } = string.Empty;
+    public string ChannelLabel { get; init; } = string.Empty;
+    public string WindowsSurface { get; init; } = string.Empty;
+    public string LinuxSurface { get; init; } = string.Empty;
+    public IReadOnlyList<SummaryCard> HeaderSummaries { get; init; } = Array.Empty<SummaryCard>();
+    public IReadOnlyList<ReadinessItem> DashboardReadiness { get; init; } = Array.Empty<ReadinessItem>();
+    public IReadOnlyList<PlatformChoice> PlatformChoices { get; init; } = Array.Empty<PlatformChoice>();
+    public IReadOnlyList<DeviceEntry> Devices { get; init; } = Array.Empty<DeviceEntry>();
+    public IReadOnlyList<PolicyItem> DevicePolicies { get; init; } = Array.Empty<PolicyItem>();
+    public IReadOnlyList<CapabilityItem> CredentialCapabilities { get; init; } = Array.Empty<CapabilityItem>();
+    public IReadOnlyList<PolicyItem> SecurityPolicies { get; init; } = Array.Empty<PolicyItem>();
+    public IReadOnlyList<MaintenanceCommand> MaintenanceCommands { get; init; } = Array.Empty<MaintenanceCommand>();
+}

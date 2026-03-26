@@ -61,6 +61,15 @@ jobs:
           if [[ -n "${MEOWKEY_SECUREBOOT_PEM_B64}" ]]; then
             mkdir -p "$(dirname "${MEOWKEY_SECUREBOOT_KEY_PATH}")"
             printf '%s' "${MEOWKEY_SECUREBOOT_PEM_B64}" | base64 -d > "${MEOWKEY_SECUREBOOT_KEY_PATH}"
+            if openssl ec -in "${MEOWKEY_SECUREBOOT_KEY_PATH}" -noout >/dev/null 2>&1; then
+              echo "MEOWKEY_SECUREBOOT_KEY_ALGORITHM=EC" >> "$GITHUB_ENV"
+            elif openssl rsa -in "${MEOWKEY_SECUREBOOT_KEY_PATH}" -noout >/dev/null 2>&1; then
+              echo "MEOWKEY_SECUREBOOT_KEY_ALGORITHM=RSA" >> "$GITHUB_ENV"
+            else
+              echo "Unsupported secure boot key format or algorithm in MEOWKEY_SECUREBOOT_PEM_B64." >&2
+              echo "Use an RSA or EC private key in PEM form before base64 encoding it." >&2
+              exit 1
+            fi
             echo "MEOWKEY_SECUREBOOT_ENABLED=true" >> "$GITHUB_ENV"
           else
             echo "MEOWKEY_SECUREBOOT_ENABLED=false" >> "$GITHUB_ENV"

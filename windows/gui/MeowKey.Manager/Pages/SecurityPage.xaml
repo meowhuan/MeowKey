@@ -1,0 +1,61 @@
+<Page
+    x:Class="MeowKey.Manager.Pages.SecurityPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:models="using:MeowKey.Manager.Models">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Spacing="12" Padding="0,0,0,12">
+            <Border Style="{StaticResource SectionCardStyle}">
+                <Grid ColumnSpacing="18">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Spacing="8">
+                        <TextBlock x:Name="PageTitleText" FontSize="20" FontWeight="SemiBold" />
+                        <TextBlock x:Name="PageDescriptionText"
+                                   Foreground="{ThemeResource AppMutedForegroundBrush}"
+                                   TextWrapping="WrapWholeWords" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1"
+                                Orientation="Horizontal"
+                                Spacing="8"
+                                VerticalAlignment="Top">
+                        <Button x:Name="PromoteSecureReadyButton"
+                                Click="OnPromoteSecureReady" />
+                        <Button x:Name="KeepDebugLimitedButton"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Click="OnKeepDebugLimited" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <ItemsControl ItemsSource="{x:Bind Snapshot.SecurityPolicies}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="models:PolicyItem">
+                        <Border Style="{StaticResource SectionCardStyle}" Margin="0,0,0,12">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="{x:Bind Title}"
+                                           Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                                <TextBlock Text="{x:Bind Value}" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock Text="{x:Bind Detail}"
+                                           TextWrapping="WrapWholeWords" />
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <Border Style="{StaticResource SectionCardStyle}">
+                <StackPanel Spacing="10">
+                    <TextBlock x:Name="RecommendationTitleText" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock x:Name="RecommendationDescriptionText"
+                               Foreground="{ThemeResource AppMutedForegroundBrush}"
+                               TextWrapping="WrapWholeWords" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

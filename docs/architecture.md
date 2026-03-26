@@ -9,8 +9,8 @@ MeowKey currently has five practical layers:
 - firmware in `src/`
 - standalone board probe firmware
 - browser WebHID debug UI in `gui/`
-- Rust desktop debug manager in `native-rs/meowkey-manager/`
-- early WPF prototype in `native/`
+- WinUI 3 Windows manager shell in `windows/gui/MeowKey.Manager/`
+- Rust / egui Linux manager shell in `native-rs/meowkey-manager/`
 
 ### 2. Firmware Main Path
 
@@ -156,15 +156,19 @@ Browser WebUI:
 - connects only to Debug HID
 - sends `INIT`, `PING`, `getInfo`, `makeCredential`, and `getAssertion`
 
-Rust manager:
+WinUI manager:
 
-- prefers Debug HID
-- fetches diagnostics
-- lists credentials
-- clears credentials
-- runs registration and assertion tests
+- organizes the app into overview, devices, credentials, security, maintenance, and activity
+- follows the Android-Cam-Bridge desktop layout rhythm on Windows
+- presents current management gaps explicitly instead of centering the UI on raw protocol tests
 
-These tools are development frontends, not generic FIDO clients.
+Rust manager shell:
+
+- keeps the Linux-facing desktop surface on `Rust + egui/eframe`
+- remains the practical maintenance and bring-up workbench for Debug HID flows
+- still covers diagnostics, credential summaries, and registration / assertion tests
+
+The browser UI and Rust shell remain development and maintenance frontends, while the WinUI manager is the product-facing desktop shell. None of them are generic FIDO clients.
 
 ## 中文
 
@@ -175,8 +179,8 @@ MeowKey 当前可以分成五个主要层次：
 - `src/` 中的固件实现
 - 独立的板卡探测固件
 - `gui/` 下的浏览器 WebHID 调试界面
-- `native-rs/meowkey-manager/` 下的 Rust 桌面调试管理器
-- `native/` 中保留的早期 WPF 原型
+- `windows/gui/MeowKey.Manager/` 下的 WinUI 3 Windows 管理器壳层
+- `native-rs/meowkey-manager/` 下的 Rust / egui Linux 管理器壳层
 
 ### 2. 固件主路径
 
@@ -322,12 +326,16 @@ USB 收到 HID 输出报文后的处理路径为：
 - 只连接 Debug HID
 - 适合快速发 `INIT`、`PING`、`getInfo`、`makeCredential`、`getAssertion`
 
-Rust 管理器：
+WinUI 管理器：
 
-- 优先连接 Debug HID
-- 能拉取诊断
-- 能列出凭据
-- 能清空凭据
-- 能做注册 / 断言测试
+- 在 Windows 上按 `概览 / 设备 / 凭据 / 安全 / 维护 / 活动` 组织信息架构
+- 布局节奏参考 Android-Cam-Bridge 的桌面管理器
+- 明确展示当前管理能力缺口，而不是继续把原始协议测试放在 UI 中心
 
-这两个工具都属于开发期前端，不是通用 FIDO 客户端。
+Rust 管理器壳层：
+
+- 继续承担 Linux 侧 `Rust + egui/eframe` 桌面界面
+- 仍然是 Debug HID 维护与 bring-up 的实用工作台
+- 继续覆盖诊断、凭据摘要、注册 / 断言测试等能力
+
+浏览器 WebUI 和 Rust 壳层仍然属于开发 / 维护前端，WinUI 管理器则是面向产品形态的桌面壳层。但它们都不是通用 FIDO 客户端。

@@ -1,0 +1,237 @@
+<Window
+    x:Class="MeowKey.Manager.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="">
+    <Grid Background="{ThemeResource AppChromeBackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="44" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="WindowTitleBar"
+              Grid.Row="0"
+              Height="40"
+              Margin="14,2,14,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="TitleBarLeftInsetColumn" Width="0" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition x:Name="TitleBarRightInsetColumn" Width="0" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="1"
+                        Orientation="Horizontal"
+                        VerticalAlignment="Center"
+                        Spacing="10"
+                        Margin="12,-2,0,0">
+                <TextBlock x:Name="TitleBarAppNameText"
+                           FontSize="14"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" />
+                <Border Width="1"
+                        Height="12"
+                        Background="{ThemeResource AppCardBorderBrush}"
+                        VerticalAlignment="Center" />
+                <TextBlock x:Name="TitleBarSubtitleText"
+                           FontSize="12"
+                           Foreground="{ThemeResource AppMutedForegroundBrush}"
+                           VerticalAlignment="Center"
+                           Margin="0,-1,0,0"
+                           TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+
+            <StackPanel Grid.Column="3"
+                        Orientation="Horizontal"
+                        VerticalAlignment="Center"
+                        Spacing="6"
+                        Margin="0,-2,10,0">
+                <Border Background="{ThemeResource AppCardBackgroundBrush}"
+                        BorderBrush="{ThemeResource AppCardBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="11"
+                        Padding="10,0"
+                        Height="28">
+                    <TextBlock x:Name="TitleBarVersionChipText"
+                               FontSize="11"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center" />
+                </Border>
+                <Border Background="{ThemeResource AppNavActiveBrush}"
+                        BorderBrush="{ThemeResource AppCardBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="11"
+                        Padding="10,0"
+                        Height="28">
+                    <TextBlock x:Name="TitleBarChannelChipText"
+                               FontSize="11"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center" />
+                </Border>
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="250" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0"
+                    Margin="14,12,8,14"
+                    Background="{ThemeResource AppPaneBackgroundBrush}"
+                    BorderBrush="{ThemeResource AppCardBorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="24"
+                    Padding="18">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Spacing="8">
+                        <Button x:Name="OverviewSectionButton" Tag="overview" Style="{StaticResource NavChipStyle}" Click="OnNavigate">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <FontIcon Glyph="&#xE80F;" FontFamily="Segoe Fluent Icons" />
+                                <TextBlock x:Name="OverviewSectionButtonText" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="DevicesSectionButton" Tag="devices" Style="{StaticResource NavChipStyle}" Click="OnNavigate">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <FontIcon Glyph="&#xE7F8;" FontFamily="Segoe Fluent Icons" />
+                                <TextBlock x:Name="DevicesSectionButtonText" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="CredentialsSectionButton" Tag="credentials" Style="{StaticResource NavChipStyle}" Click="OnNavigate">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <FontIcon Glyph="&#xE8D1;" FontFamily="Segoe Fluent Icons" />
+                                <TextBlock x:Name="CredentialsSectionButtonText" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="SecuritySectionButton" Tag="security" Style="{StaticResource NavChipStyle}" Click="OnNavigate">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <FontIcon Glyph="&#xE72E;" FontFamily="Segoe Fluent Icons" />
+                                <TextBlock x:Name="SecuritySectionButtonText" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="MaintenanceSectionButton" Tag="maintenance" Style="{StaticResource NavChipStyle}" Click="OnNavigate">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <FontIcon Glyph="&#xE713;" FontFamily="Segoe Fluent Icons" />
+                                <TextBlock x:Name="MaintenanceSectionButtonText" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="ActivitySectionButton" Tag="activity" Style="{StaticResource NavChipStyle}" Click="OnNavigate">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <FontIcon Glyph="&#xE823;" FontFamily="Segoe Fluent Icons" />
+                                <TextBlock x:Name="ActivitySectionButtonText" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+
+                    <Border Grid.Row="1"
+                            Background="{ThemeResource AppCardBackgroundBrush}"
+                            BorderBrush="{ThemeResource AppCardBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="16"
+                            Padding="12">
+                        <StackPanel Spacing="6">
+                            <TextBlock x:Name="BuildVersionText" FontWeight="SemiBold" />
+                            <TextBlock x:Name="BuildChannelText"
+                                       Foreground="{ThemeResource AppMutedForegroundBrush}"
+                                       TextWrapping="WrapWholeWords" />
+                            <Border Height="1"
+                                    Margin="0,4,0,2"
+                                    Background="{ThemeResource AppCardBorderBrush}" />
+                            <TextBlock x:Name="WindowsSurfaceLabelText"
+                                       Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                            <TextBlock x:Name="WindowsSurfaceText" FontWeight="SemiBold" />
+                            <TextBlock x:Name="LinuxSurfaceLabelText"
+                                       Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                            <TextBlock x:Name="LinuxSurfaceText"
+                                       FontWeight="SemiBold"
+                                       TextWrapping="WrapWholeWords" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Column="1" Margin="8,12,14,14">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0"
+                        Background="{ThemeResource AppPaneBackgroundBrush}"
+                        BorderBrush="{ThemeResource AppCardBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="24"
+                        Padding="22"
+                        Margin="0,0,0,12">
+                    <Grid ColumnSpacing="18">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Spacing="6">
+                            <TextBlock x:Name="CurrentSectionTitleText" FontSize="30" FontWeight="SemiBold" />
+                            <TextBlock x:Name="CurrentSectionSubtitleText"
+                                       Foreground="{ThemeResource AppMutedForegroundBrush}"
+                                       TextWrapping="WrapWholeWords" />
+                        </StackPanel>
+
+                        <Grid Grid.Column="1" ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="170" />
+                                <ColumnDefinition Width="170" />
+                                <ColumnDefinition Width="170" />
+                                <ColumnDefinition Width="170" />
+                            </Grid.ColumnDefinitions>
+
+                            <Border Grid.Column="0" Style="{StaticResource SurfaceCardStyle}">
+                                <StackPanel Spacing="4">
+                                    <TextBlock x:Name="SummaryCard1LabelText" Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                                    <TextBlock x:Name="SummaryCard1ValueText" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Grid.Column="1" Style="{StaticResource SurfaceCardStyle}">
+                                <StackPanel Spacing="4">
+                                    <TextBlock x:Name="SummaryCard2LabelText" Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                                    <TextBlock x:Name="SummaryCard2ValueText" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Grid.Column="2" Style="{StaticResource SurfaceCardStyle}">
+                                <StackPanel Spacing="4">
+                                    <TextBlock x:Name="SummaryCard3LabelText" Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                                    <TextBlock x:Name="SummaryCard3ValueText" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Grid.Column="3" Style="{StaticResource SurfaceCardStyle}">
+                                <StackPanel Spacing="4">
+                                    <TextBlock x:Name="SummaryCard4LabelText" Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                                    <TextBlock x:Name="SummaryCard4ValueText" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Row="1"
+                        Background="{ThemeResource AppPaneBackgroundBrush}"
+                        BorderBrush="{ThemeResource AppCardBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="24"
+                        Padding="18">
+                    <Frame x:Name="ContentFrame" />
+                </Border>
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

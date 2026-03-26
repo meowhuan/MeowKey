@@ -1,0 +1,41 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using MeowKey.Manager.Models;
+using MeowKey.Manager.Services;
+
+namespace MeowKey.Manager.Pages;
+
+public sealed partial class MaintenancePage : Page
+{
+    private readonly LocalizationService _localizer = LocalizationService.Current;
+
+    public MaintenancePage()
+    {
+        InitializeComponent();
+        ApplyLocalization();
+    }
+
+    public ManagerSnapshot Snapshot => ((App)Application.Current).Repository.Snapshot;
+
+    private ManagerRepository Repository => ((App)Application.Current).Repository;
+
+    private void OnPrepareReleaseCheck(object sender, RoutedEventArgs e)
+    {
+        Repository.RecordAction("Activity.Category.maintenance", "Action.Maintenance.PrepareRelease");
+    }
+
+    private void OnLogProbeReminder(object sender, RoutedEventArgs e)
+    {
+        Repository.RecordAction("Activity.Category.maintenance", "Action.Maintenance.ProbeReminder");
+    }
+
+    private void ApplyLocalization()
+    {
+        PageTitleText.Text = _localizer["Page.Maintenance.Title"];
+        PageDescriptionText.Text = _localizer["Page.Maintenance.Description"];
+        PrepareReleaseCheckButton.Content = _localizer["Page.Maintenance.Action.PrepareRelease"];
+        LogProbeReminderButton.Content = _localizer["Page.Maintenance.Action.ProbeReminder"];
+        ToneTitleText.Text = _localizer["Page.Maintenance.ToneTitle"];
+        ToneDescriptionText.Text = _localizer["Page.Maintenance.ToneDescription"];
+    }
+}

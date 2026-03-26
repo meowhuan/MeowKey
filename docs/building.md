@@ -134,7 +134,7 @@ Linux:
 
 Both scripts can also work without an explicit path when there is exactly one `*.uf2` next to the script.
 
-### 6. Debug Tools
+### 6. Desktop Apps and Debug Tools
 
 Browser UI:
 
@@ -142,7 +142,13 @@ Browser UI:
 powershell -ExecutionPolicy Bypass -File .\scripts\gui.ps1
 ```
 
-Rust manager:
+Windows manager shell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-manager.ps1 -Configuration Release
+```
+
+Linux-facing Rust manager shell:
 
 ```powershell
 cd .\native-rs\meowkey-manager
@@ -151,8 +157,10 @@ cargo run
 
 Important notes:
 
-- both tools depend on Debug HID
-- a hardened build cannot be used with them
+- the browser UI and the Rust shell depend on Debug HID
+- the WinUI shell is the main Windows manager surface and now lives in `windows/gui/MeowKey.Manager/`
+- the Linux desktop surface currently stays on Rust + egui/eframe
+- a hardened build cannot be used with the browser UI or the Rust maintenance shell
 - the probe image does not use Debug HID; it reports through USB serial
 - `DIAG 6` persists user-presence baseline settings
 - `DIAG 7` only changes the current power session
@@ -338,7 +346,7 @@ Linux：
 
 如果脚本旁边只有一个 `*.uf2` 文件，两个脚本也都支持省略路径参数。
 
-### 6. 调试工具
+### 6. 桌面应用与调试工具
 
 浏览器调试台：
 
@@ -346,7 +354,13 @@ Linux：
 powershell -ExecutionPolicy Bypass -File .\scripts\gui.ps1
 ```
 
-Rust 管理器：
+Windows 管理器壳层：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-manager.ps1 -Configuration Release
+```
+
+Linux 侧 Rust 管理器壳层：
 
 ```powershell
 cd .\native-rs\meowkey-manager
@@ -355,8 +369,10 @@ cargo run
 
 需要注意：
 
-- 这两个工具都依赖 Debug HID
-- 硬化构建不能直接配合它们使用
+- 浏览器调试台和 Rust 壳层都依赖 Debug HID
+- WinUI 壳层是新的 Windows 主管理界面，项目路径为 `windows/gui/MeowKey.Manager/`
+- Linux 桌面面当前继续使用 Rust + egui/eframe
+- 浏览器调试台和 Rust 维护壳层都不能直接配合硬化构建使用
 - probe 固件不走 Debug HID，而是通过 USB 串口输出报告
 - `DIAG 6` 会持久化写入 user presence baseline
 - `DIAG 7` 只影响当前上电会话
