@@ -1,4 +1,3 @@
-using System.Collections.ObjectModel;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using MeowKey.Manager.Models;
@@ -16,18 +15,20 @@ public sealed partial class ActivityPage : Page
         ApplyLocalization();
     }
 
-    public ObservableCollection<ActivityEntry> ActivityEntries => ((App)Application.Current).Repository.ActivityEntries;
+    public ManagerSnapshot Snapshot => ((App)Application.Current).Repository.Snapshot;
 
     private ManagerRepository Repository => ((App)Application.Current).Repository;
 
     private void OnRecordSnapshot(object sender, RoutedEventArgs e)
     {
+        Repository.Refresh();
         Repository.RecordAction("Activity.Category.activity", "Action.Activity.RecordSnapshot");
+        Frame.Navigate(typeof(ActivityPage));
     }
 
     private void OnPinLinuxNote(object sender, RoutedEventArgs e)
     {
-        Repository.RecordAction("Activity.Category.platform", "Action.Activity.PinLinux");
+        Repository.RecordAction("Activity.Category.activity", "Action.Activity.PinLinux");
     }
 
     private void ApplyLocalization()
@@ -36,5 +37,6 @@ public sealed partial class ActivityPage : Page
         PageDescriptionText.Text = _localizer["Page.Activity.Description"];
         RecordSnapshotButton.Content = _localizer["Page.Activity.Action.RecordSnapshot"];
         PinLinuxNoteButton.Content = _localizer["Page.Activity.Action.PinLinux"];
+        AboutDetailsTitleText.Text = _localizer["Page.Activity.DetailsTitle"];
     }
 }

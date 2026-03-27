@@ -32,29 +32,26 @@
                 </Grid>
             </Border>
 
-            <Border Style="{StaticResource SectionCardStyle}"
-                    Background="{ThemeResource AppOutputBackgroundBrush}">
-                <ListView ItemsSource="{x:Bind ActivityEntries}"
-                          SelectionMode="None"
-                          IsItemClickEnabled="False"
-                          Background="Transparent"
-                          BorderThickness="0">
-                    <ListView.ItemTemplate>
-                        <DataTemplate x:DataType="models:ActivityEntry">
-                            <Border Style="{StaticResource SurfaceCardStyle}" Margin="0,0,0,8">
-                                <StackPanel Spacing="6">
-                                    <StackPanel Orientation="Horizontal" Spacing="10">
-                                        <TextBlock Text="{x:Bind TimestampText}"
+            <Border Style="{StaticResource SectionCardStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock x:Name="AboutDetailsTitleText" FontSize="18" FontWeight="SemiBold" />
+                    <ItemsControl ItemsSource="{x:Bind Snapshot.AboutItems}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="models:InfoItem">
+                                <Border Style="{StaticResource SurfaceCardStyle}" Margin="0,0,0,8">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="{x:Bind Label}"
                                                    Foreground="{ThemeResource AppMutedForegroundBrush}" />
-                                        <TextBlock Text="{x:Bind Category}" FontWeight="SemiBold" />
+                                        <TextBlock Text="{x:Bind Value}" FontWeight="SemiBold" TextWrapping="WrapWholeWords" />
+                                        <TextBlock Text="{x:Bind Detail}"
+                                                   Foreground="{ThemeResource AppMutedForegroundBrush}"
+                                                   TextWrapping="WrapWholeWords" />
                                     </StackPanel>
-                                    <TextBlock Text="{x:Bind Message}"
-                                               TextWrapping="WrapWholeWords" />
-                                </StackPanel>
-                            </Border>
-                        </DataTemplate>
-                    </ListView.ItemTemplate>
-                </ListView>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
             </Border>
         </StackPanel>
     </ScrollViewer>

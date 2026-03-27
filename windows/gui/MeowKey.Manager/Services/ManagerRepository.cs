@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Reflection;
 using MeowKey.Manager.Models;
 
 namespace MeowKey.Manager.Services;
@@ -6,10 +7,10 @@ namespace MeowKey.Manager.Services;
 public sealed class ManagerRepository
 {
     private readonly LocalizationService _localizer = LocalizationService.Current;
+    private readonly ManagerDeviceService _deviceService = new();
 
     public ManagerRepository()
     {
-        Snapshot = BuildSnapshot();
         ActivityEntries = new ObservableCollection<ActivityEntry>
         {
             CreateActivityEntry(DateTime.Now.AddMinutes(-18), "Activity.Category.shell", "Activity.Startup.Shell"),
@@ -17,15 +18,37 @@ public sealed class ManagerRepository
             CreateActivityEntry(DateTime.Now.AddMinutes(-11), "Activity.Category.platform", "Activity.Startup.PlatformLinux"),
             CreateActivityEntry(DateTime.Now.AddMinutes(-8), "Activity.Category.cleanup", "Activity.Startup.Cleanup")
         };
+
+        Refresh();
     }
 
-    public ManagerSnapshot Snapshot { get; }
+    public ManagerSnapshot Snapshot { get; private set; } = new();
 
     public ObservableCollection<ActivityEntry> ActivityEntries { get; }
+
+    public event EventHandler? SnapshotChanged;
 
     public void RecordAction(string categoryKey, string messageKey)
     {
         ActivityEntries.Insert(0, CreateActivityEntry(DateTime.Now, categoryKey, messageKey));
+    }
+
+    public void Refresh()
+    {
+        IReadOnlyList<ConnectedDeviceInfo> devices;
+
+        try
+        {
+            devices = _deviceService.EnumerateDevices();
+        }
+        catch (Exception ex)
+        {
+            devices = Array.Empty<ConnectedDeviceInfo>();
+            ActivityEntries.Insert(0, new ActivityEntry(DateTime.Now, _localizer["Activity.Category.debug"], ex.Message));
+        }
+
+        Snapshot = BuildSnapshot(devices);
+        SnapshotChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private ActivityEntry CreateActivityEntry(DateTime timestamp, string categoryKey, string messageKey)
@@ -33,25 +56,28 @@ public sealed class ManagerRepository
         return new ActivityEntry(timestamp, _localizer[categoryKey], _localizer[messageKey]);
     }
 
-    private ManagerSnapshot BuildSnapshot()
+    private ManagerSnapshot BuildSnapshot(IReadOnlyList<ConnectedDeviceInfo> devices)
     {
         var t = _localizer;
+        var currentDevice = devices.FirstOrDefault();
+        var appVersion = GetApplicationVersion();
+        var headerSummaries = BuildHeaderSummaries(currentDevice, t);
+        var overviewFacts = BuildOverviewFacts(currentDevice, t);
+        var deviceEntries = BuildDeviceEntries(devices, t);
+        var securityPolicies = BuildSecurityPolicies(currentDevice, t);
+        var credentialCapabilities = BuildCredentialCapabilities(currentDevice, t);
+        var aboutItems = BuildAboutItems(currentDevice, appVersion, t);
 
         return new ManagerSnapshot
         {
             ProductName = t["App.ProductName"],
             WindowSubtitle = t["App.WindowSubtitle"],
-            VersionLabel = "v0.1.0-preview",
+            VersionLabel = appVersion,
             ChannelLabel = t["App.ChannelLabel"],
             WindowsSurface = t["App.WindowsSurface"],
             LinuxSurface = t["App.LinuxSurface"],
-            HeaderSummaries =
-            [
-                new SummaryCard(t["Summary.PrimaryDevice.Label"], t["Summary.PrimaryDevice.Value"], t["Summary.PrimaryDevice.Detail"]),
-                new SummaryCard(t["Summary.ReleaseMode.Label"], t["Summary.ReleaseMode.Value"], t["Summary.ReleaseMode.Detail"]),
-                new SummaryCard(t["Summary.CredentialFlow.Label"], t["Summary.CredentialFlow.Value"], t["Summary.CredentialFlow.Detail"]),
-                new SummaryCard(t["Summary.LinuxUi.Label"], t["Summary.LinuxUi.Value"], t["Summary.LinuxUi.Detail"])
-            ],
+            HeaderSummaries = headerSummaries,
+            OverviewFacts = overviewFacts,
             DashboardReadiness =
             [
                 new ReadinessItem(t["Dashboard.Readiness.Now"], t["Dashboard.Readiness.Item1.Title"], t["Dashboard.Readiness.Item1.Detail"]),
@@ -65,69 +91,174 @@ public sealed class ManagerRepository
                 new PlatformChoice(t["Dashboard.Platform.Linux"], t["Dashboard.Platform.Linux.Toolkit"], t["Dashboard.Platform.Linux.Detail"]),
                 new PlatformChoice(t["Dashboard.Platform.Shared"], t["Dashboard.Platform.Shared.Toolkit"], t["Dashboard.Platform.Shared.Detail"])
             ],
-            Devices =
-            [
-                new DeviceEntry(
-                    t["Devices.Entry.Primary.Name"],
-                    t["Devices.Entry.Primary.Role"],
-                    t["Devices.Item.FirmwareLabel"],
-                    "generic-hardened",
-                    t["Devices.Item.BoardLabel"],
-                    "meowkey_rp2350_usb",
-                    t["Devices.Item.TransportLabel"],
-                    t["Devices.Entry.Primary.Transport"],
-                    t["Devices.Entry.Primary.State"],
-                    t["Devices.Entry.Primary.Detail"]),
-                new DeviceEntry(
-                    t["Devices.Entry.Bringup.Name"],
-                    t["Devices.Entry.Bringup.Role"],
-                    t["Devices.Item.FirmwareLabel"],
-                    "generic-debug",
-                    t["Devices.Item.BoardLabel"],
-                    "meowkey_rp2350_usb",
-                    t["Devices.Item.TransportLabel"],
-                    t["Devices.Entry.Bringup.Transport"],
-                    t["Devices.Entry.Bringup.State"],
-                    t["Devices.Entry.Bringup.Detail"]),
-                new DeviceEntry(
-                    t["Devices.Entry.Probe.Name"],
-                    t["Devices.Entry.Probe.Role"],
-                    t["Devices.Item.FirmwareLabel"],
-                    "probe-board-id",
-                    t["Devices.Item.BoardLabel"],
-                    "unknown-baseboard",
-                    t["Devices.Item.TransportLabel"],
-                    t["Devices.Entry.Probe.Transport"],
-                    t["Devices.Entry.Probe.State"],
-                    t["Devices.Entry.Probe.Detail"])
-            ],
+            Devices = deviceEntries,
             DevicePolicies =
             [
                 new PolicyItem(t["Devices.Policy1.Title"], t["Devices.Policy1.Value"], t["Devices.Policy1.Detail"]),
                 new PolicyItem(t["Devices.Policy2.Title"], t["Devices.Policy2.Value"], t["Devices.Policy2.Detail"]),
                 new PolicyItem(t["Devices.Policy3.Title"], t["Devices.Policy3.Value"], t["Devices.Policy3.Detail"])
             ],
-            CredentialCapabilities =
-            [
-                new CapabilityItem(t["Credentials.Capability1.Name"], t["Credentials.Capability1.Status"], t["Credentials.Capability1.Detail"]),
-                new CapabilityItem(t["Credentials.Capability2.Name"], t["Credentials.Capability2.Status"], t["Credentials.Capability2.Detail"]),
-                new CapabilityItem(t["Credentials.Capability3.Name"], t["Credentials.Capability3.Status"], t["Credentials.Capability3.Detail"]),
-                new CapabilityItem(t["Credentials.Capability4.Name"], t["Credentials.Capability4.Status"], t["Credentials.Capability4.Detail"])
-            ],
-            SecurityPolicies =
-            [
-                new PolicyItem(t["Security.Policy1.Title"], t["Security.Policy1.Value"], t["Security.Policy1.Detail"]),
-                new PolicyItem(t["Security.Policy2.Title"], t["Security.Policy2.Value"], t["Security.Policy2.Detail"]),
-                new PolicyItem(t["Security.Policy3.Title"], t["Security.Policy3.Value"], t["Security.Policy3.Detail"]),
-                new PolicyItem(t["Security.Policy4.Title"], t["Security.Policy4.Value"], t["Security.Policy4.Detail"])
-            ],
+            CredentialCapabilities = credentialCapabilities,
+            SecurityPolicies = securityPolicies,
             MaintenanceCommands =
             [
-                new MaintenanceCommand(t["Maintenance.Command.Check.Label"], "powershell -ExecutionPolicy Bypass -File .\\scripts\\check.ps1", t["Maintenance.Command.Check.Detail"]),
-                new MaintenanceCommand(t["Maintenance.Command.Build.Label"], "powershell -ExecutionPolicy Bypass -File .\\scripts\\build.ps1 -BuildDir build -NoPicotool -IgnoreGitGlobalConfig", t["Maintenance.Command.Build.Detail"]),
-                new MaintenanceCommand(t["Maintenance.Command.Hardened.Label"], "powershell -ExecutionPolicy Bypass -File .\\scripts\\build.ps1 -BuildDir build-hardened -NoPicotool -IgnoreGitGlobalConfig -DisableDebugHid", t["Maintenance.Command.Hardened.Detail"]),
-                new MaintenanceCommand(t["Maintenance.Command.Probe.Label"], "powershell -ExecutionPolicy Bypass -File .\\scripts\\probe-board.ps1", t["Maintenance.Command.Probe.Detail"])
-            ]
+                new MaintenanceCommand(t["Debug.Command.InstallDriver.Label"], "powershell -ExecutionPolicy Bypass -File .\\windows\\driver\\manager-winusb\\install-manager-driver.ps1", t["Debug.Command.InstallDriver.Detail"]),
+                new MaintenanceCommand(t["Debug.Command.RunManager.Label"], "powershell -ExecutionPolicy Bypass -File .\\scripts\\run-manager.ps1 -Configuration Release", t["Debug.Command.RunManager.Detail"]),
+                new MaintenanceCommand(t["Debug.Command.BuildDebug.Label"], "powershell -ExecutionPolicy Bypass -File .\\scripts\\build.ps1 -BuildDir build -NoPicotool -IgnoreGitGlobalConfig", t["Debug.Command.BuildDebug.Detail"]),
+                new MaintenanceCommand(t["Debug.Command.Probe.Label"], "powershell -ExecutionPolicy Bypass -File .\\scripts\\probe-board.ps1", t["Debug.Command.Probe.Detail"])
+            ],
+            AboutItems = aboutItems
         };
+    }
+
+    private IReadOnlyList<SummaryCard> BuildHeaderSummaries(ConnectedDeviceInfo? device, LocalizationService t)
+    {
+        if (device is null)
+        {
+            return
+            [
+                new SummaryCard(t["Summary.Device.Label"], t["Summary.Device.Disconnected"], string.Empty),
+                new SummaryCard(t["Summary.Firmware.Label"], t["Summary.Value.Unknown"], string.Empty),
+                new SummaryCard(t["Summary.Credentials.Label"], t["Summary.Value.Unknown"], string.Empty),
+                new SummaryCard(t["Summary.Channel.Label"], t["Summary.Value.Offline"], string.Empty)
+            ];
+        }
+
+        return
+        [
+            new SummaryCard(t["Summary.Device.Label"], device.DeviceName, device.ProductName),
+            new SummaryCard(t["Summary.Firmware.Label"], device.FirmwareVersion, device.BuildFlavor),
+            new SummaryCard(t["Summary.Credentials.Label"], $"{device.CredentialCount}/{device.CredentialCapacity}", $"format v{device.StoreFormatVersion}"),
+            new SummaryCard(t["Summary.Channel.Label"], device.Transport, device.ManagementAvailable ? t["Summary.Channel.Ready"] : t["Summary.Value.Offline"])
+        ];
+    }
+
+    private IReadOnlyList<InfoItem> BuildOverviewFacts(ConnectedDeviceInfo? device, LocalizationService t)
+    {
+        if (device is null)
+        {
+            return
+            [
+                new InfoItem(t["Overview.Fact.Connection"], t["Summary.Device.Disconnected"]),
+                new InfoItem(t["Overview.Fact.Driver"], t["Summary.Value.Unknown"]),
+                new InfoItem(t["Overview.Fact.Board"], t["Summary.Value.Unknown"]),
+                new InfoItem(t["Overview.Fact.Security"], t["Summary.Value.Unknown"])
+            ];
+        }
+
+        return
+        [
+            new InfoItem(t["Overview.Fact.Connection"], device.Transport, device.DevicePath),
+            new InfoItem(t["Overview.Fact.Driver"], t["Overview.Driver.WinUsb"], device.UsbIdentity),
+            new InfoItem(t["Overview.Fact.Board"], device.BoardCode, device.BoardSummary),
+            new InfoItem(t["Overview.Fact.Security"], device.SignedBootEnabled ? t["Overview.Security.Signed"] : t["Overview.Security.Unsigned"], device.UserPresenceSource)
+        ];
+    }
+
+    private IReadOnlyList<DeviceEntry> BuildDeviceEntries(IReadOnlyList<ConnectedDeviceInfo> devices, LocalizationService t)
+    {
+        if (devices.Count == 0)
+        {
+            return
+            [
+                new DeviceEntry(
+                    t["Devices.Entry.None.Name"],
+                    t["Devices.Entry.None.Role"],
+                    t["Devices.Item.FirmwareLabel"],
+                    t["Summary.Value.Unknown"],
+                    t["Devices.Item.BoardLabel"],
+                    t["Summary.Value.Unknown"],
+                    t["Devices.Item.TransportLabel"],
+                    t["Summary.Value.Offline"],
+                    t["Summary.Device.Disconnected"],
+                    t["Devices.Entry.None.Detail"])
+            ];
+        }
+
+        return devices
+            .Select(device => new DeviceEntry(
+                device.DeviceName,
+                device.ManagementAvailable ? t["Devices.Role.Managed"] : t["Devices.Role.AuthOnly"],
+                t["Devices.Item.FirmwareLabel"],
+                $"{device.FirmwareVersion} ({device.BuildFlavor})",
+                t["Devices.Item.BoardLabel"],
+                device.BoardCode,
+                t["Devices.Item.TransportLabel"],
+                device.Transport,
+                device.DebugHidEnabled ? t["Devices.State.DebugPresent"] : t["Devices.State.ManagedOnly"],
+                device.BoardSummary))
+            .ToArray();
+    }
+
+    private IReadOnlyList<CapabilityItem> BuildCredentialCapabilities(ConnectedDeviceInfo? device, LocalizationService t)
+    {
+        var countText = device is null
+            ? t["Summary.Value.Unknown"]
+            : $"{device.CredentialCount}/{device.CredentialCapacity}";
+
+        return
+        [
+            new CapabilityItem(t["Credentials.Capability1.Name"], countText, t["Credentials.Capability1.Detail"]),
+            new CapabilityItem(t["Credentials.Capability2.Name"], t["Credentials.Capability2.Status"], t["Credentials.Capability2.Detail"]),
+            new CapabilityItem(t["Credentials.Capability3.Name"], t["Credentials.Capability3.Status"], t["Credentials.Capability3.Detail"]),
+            new CapabilityItem(t["Credentials.Capability4.Name"], device?.DebugHidEnabled == true ? t["Credentials.Capability4.Status"] : t["Credentials.Capability4.StatusLimited"], t["Credentials.Capability4.Detail"])
+        ];
+    }
+
+    private IReadOnlyList<PolicyItem> BuildSecurityPolicies(ConnectedDeviceInfo? device, LocalizationService t)
+    {
+        if (device is null)
+        {
+            return
+            [
+                new PolicyItem(t["Security.Policy1.Title"], t["Summary.Value.Unknown"], t["Security.Policy1.Detail"]),
+                new PolicyItem(t["Security.Policy2.Title"], t["Summary.Value.Unknown"], t["Security.Policy2.Detail"]),
+                new PolicyItem(t["Security.Policy3.Title"], t["Summary.Value.Unknown"], t["Security.Policy3.Detail"]),
+                new PolicyItem(t["Security.Policy4.Title"], t["Summary.Value.Unknown"], t["Security.Policy4.Detail"])
+            ];
+        }
+
+        return
+        [
+            new PolicyItem(t["Security.Policy1.Title"], $"{device.UserPresenceSource} · {device.UserPresenceTapCount}", $"{device.UserPresenceGestureWindowMs} ms / {device.UserPresenceRequestTimeoutMs} ms"),
+            new PolicyItem(t["Security.Policy2.Title"], device.PinConfigured ? t["Security.Pin.Configured"] : t["Security.Pin.NotConfigured"], $"{t["Security.Pin.Retries"]}: {device.PinRetries}"),
+            new PolicyItem(t["Security.Policy3.Title"], device.SignedBootEnabled ? t["Security.Policy3.ValueSigned"] : t["Security.Policy3.ValueUnsigned"], device.AntiRollbackEnabled ? t["Security.Policy3.DetailRollbackOn"] : t["Security.Policy3.DetailRollbackOff"]),
+            new PolicyItem(t["Security.Policy4.Title"], device.DebugHidEnabled ? t["Security.Policy4.ValueDebug"] : t["Security.Policy4.ValueManaged"], device.ManagementAvailable ? t["Security.Policy4.DetailManaged"] : t["Security.Policy4.DetailUnavailable"])
+        ];
+    }
+
+    private IReadOnlyList<InfoItem> BuildAboutItems(ConnectedDeviceInfo? device, string appVersion, LocalizationService t)
+    {
+        if (device is null)
+        {
+            return
+            [
+                new InfoItem(t["About.Item.AppVersion"], appVersion),
+                new InfoItem(t["About.Item.DeviceVersion"], t["Summary.Device.Disconnected"]),
+                new InfoItem(t["About.Item.DeviceName"], t["Summary.Device.Disconnected"]),
+                new InfoItem(t["About.Item.UsbIdentity"], t["Summary.Value.Unknown"]),
+                new InfoItem(t["About.Item.Board"], t["Summary.Value.Unknown"])
+            ];
+        }
+
+        return
+        [
+            new InfoItem(t["About.Item.AppVersion"], appVersion),
+            new InfoItem(t["About.Item.DeviceVersion"], device.FirmwareVersion, device.BuildFlavor),
+            new InfoItem(t["About.Item.DeviceName"], device.DeviceName, device.ProductName),
+            new InfoItem(t["About.Item.UsbIdentity"], device.UsbIdentity, device.Serial),
+            new InfoItem(t["About.Item.Board"], device.BoardCode, device.BoardSummary)
+        ];
+    }
+
+    private static string GetApplicationVersion()
+    {
+        var informational = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(informational))
+        {
+            return informational!;
+        }
+
+        return Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.0.0";
     }
 }

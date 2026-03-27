@@ -1,0 +1,39 @@
+[Version]
+Signature="$WINDOWS NT$"
+Class=USBDevice
+ClassGuid={88BAE032-5A81-49f0-BC3D-A4FF138216D6}
+Provider=%ManufacturerName%
+CatalogFile=meowkey-manager-winusb.cat
+DriverVer=03/26/2026,1.0.0.0
+
+[Manufacturer]
+%ManufacturerName%=DeviceList,NTamd64
+
+[DeviceList.NTamd64]
+%ManagerInterfaceDesc%=WinUsb_Install,USB\VID_CAFE&PID_4005&MI_01
+
+[WinUsb_Install]
+Include=winusb.inf
+Needs=WINUSB.NT
+
+[WinUsb_Install.Services]
+Include=winusb.inf
+Needs=WINUSB.NT.Services
+
+[WinUsb_Install.HW]
+AddReg=ManagerInterfaceGuid_AddReg
+
+[WinUsb_Install.Wdf]
+KmdfService=WINUSB, WinUsb_ServiceInstall
+
+[WinUsb_ServiceInstall]
+KmdfLibraryVersion=1.33
+
+[ManagerInterfaceGuid_AddReg]
+HKR,,DeviceInterfaceGUIDs,0x10000,"{9DE6E7C7-0F1E-4E9B-BD9C-7F6406C8A42B}"
+HKR,,FriendlyName,0x00000000,%ManagerFriendlyName%
+
+[Strings]
+ManufacturerName="MeowKey"
+ManagerInterfaceDesc="MeowKey Management Interface"
+ManagerFriendlyName="MeowKey Manager Channel"

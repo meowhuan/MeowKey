@@ -21,7 +21,9 @@ public sealed partial class DevicesPage : Page
 
     private void OnRefreshInventory(object sender, RoutedEventArgs e)
     {
+        Repository.Refresh();
         Repository.RecordAction("Activity.Category.devices", "Action.Devices.Refresh");
+        Frame.Navigate(typeof(DevicesPage));
     }
 
     private void OnQueueProbePass(object sender, RoutedEventArgs e)

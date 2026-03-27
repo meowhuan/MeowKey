@@ -1,6 +1,8 @@
 #ifndef _TUSB_CONFIG_H_
 #define _TUSB_CONFIG_H_
 
+#include "meowkey_build_config.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -27,11 +29,14 @@ extern "C" {
 
 #define CFG_TUD_CDC 0
 #define CFG_TUD_MSC 0
-#define CFG_TUD_HID 2
+#define CFG_TUD_HID (MEOWKEY_ENABLE_DEBUG_HID ? 2 : 1)
 #define CFG_TUD_MIDI 0
-#define CFG_TUD_VENDOR 0
+#define CFG_TUD_VENDOR 1
 
 #define CFG_TUD_HID_EP_BUFSIZE 64
+#define CFG_TUD_VENDOR_EPSIZE 64
+#define CFG_TUD_VENDOR_RX_BUFSIZE 64
+#define CFG_TUD_VENDOR_TX_BUFSIZE 1024
 
 #ifndef CFG_TUSB_MEM_SECTION
 #define CFG_TUSB_MEM_SECTION

@@ -22,7 +22,8 @@ const DEBUG_USAGE: u16 = 0x01;
 const FIDO_USAGE_PAGE: u16 = 0xf1d0;
 const FIDO_USAGE: u16 = 0x01;
 const DEFAULT_VENDOR_ID: u16 = 0xcafe;
-const DEFAULT_PRODUCT_ID: u16 = 0x4004;
+const DEFAULT_PRODUCT_ID: u16 = 0x4005;
+const LEGACY_PRODUCT_ID: u16 = 0x4004;
 const PACKET_SIZE: usize = 64;
 const INIT_PAYLOAD_SIZE: usize = 57;
 const CONT_PAYLOAD_SIZE: usize = 59;
@@ -1063,7 +1064,8 @@ fn pick_debug_candidate(api: &HidApi) -> Result<DeviceCandidate> {
     let mut candidates = Vec::new();
 
     for info in api.device_list() {
-        if info.vendor_id() != DEFAULT_VENDOR_ID || info.product_id() != DEFAULT_PRODUCT_ID {
+        if info.vendor_id() != DEFAULT_VENDOR_ID ||
+           !(info.product_id() == DEFAULT_PRODUCT_ID || info.product_id() == LEGACY_PRODUCT_ID) {
             continue;
         }
 

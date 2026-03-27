@@ -248,6 +248,7 @@ add_executable(meowkey
     src/ctap_hid.c
     src/diagnostics.c
     src/main.c
+    src/manager_channel.c
     src/mbedtls_compat.c
     src/security_status.c
     src/user_presence.c

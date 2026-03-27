@@ -110,6 +110,20 @@ public sealed class PolicyItem
     public string Detail { get; }
 }
 
+public sealed class InfoItem
+{
+    public InfoItem(string label, string value, string detail = "")
+    {
+        Label = label;
+        Value = value;
+        Detail = detail;
+    }
+
+    public string Label { get; }
+    public string Value { get; }
+    public string Detail { get; }
+}
+
 public sealed class MaintenanceCommand
 {
     public MaintenanceCommand(string label, string command, string detail)
@@ -148,6 +162,7 @@ public sealed class ManagerSnapshot
     public string WindowsSurface { get; init; } = string.Empty;
     public string LinuxSurface { get; init; } = string.Empty;
     public IReadOnlyList<SummaryCard> HeaderSummaries { get; init; } = Array.Empty<SummaryCard>();
+    public IReadOnlyList<InfoItem> OverviewFacts { get; init; } = Array.Empty<InfoItem>();
     public IReadOnlyList<ReadinessItem> DashboardReadiness { get; init; } = Array.Empty<ReadinessItem>();
     public IReadOnlyList<PlatformChoice> PlatformChoices { get; init; } = Array.Empty<PlatformChoice>();
     public IReadOnlyList<DeviceEntry> Devices { get; init; } = Array.Empty<DeviceEntry>();
@@ -155,4 +170,5 @@ public sealed class ManagerSnapshot
     public IReadOnlyList<CapabilityItem> CredentialCapabilities { get; init; } = Array.Empty<CapabilityItem>();
     public IReadOnlyList<PolicyItem> SecurityPolicies { get; init; } = Array.Empty<PolicyItem>();
     public IReadOnlyList<MaintenanceCommand> MaintenanceCommands { get; init; } = Array.Empty<MaintenanceCommand>();
+    public IReadOnlyList<InfoItem> AboutItems { get; init; } = Array.Empty<InfoItem>();
 }

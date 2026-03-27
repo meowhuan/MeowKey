@@ -6,6 +6,7 @@
 #include "board_id.h"
 #include "ctap_hid.h"
 #include "diagnostics.h"
+#include "manager_channel.h"
 #include "pico/stdlib.h"
 #include "pico/status_led.h"
 #include "security_status.h"
@@ -119,6 +120,7 @@ int main(void) {
     meowkey_board_id_init();
     meowkey_board_id_log_summary();
     meowkey_user_presence_init();
+    meowkey_manager_init();
     ctap_hid_init();
     tusb_init();
 
@@ -135,6 +137,7 @@ void tud_mount_cb(void) {
 }
 
 void tud_umount_cb(void) {
+    meowkey_manager_init();
     ctap_hid_init();
     sync_blink_interval();
 }

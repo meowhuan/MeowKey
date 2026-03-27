@@ -8,33 +8,37 @@
 #include "tusb.h"
 
 enum {
-    USB_VID = 0xCafe,
-    USB_PID = 0x4004,
+    USB_VID = MEOWKEY_USB_VID,
+    USB_PID = MEOWKEY_USB_PID,
     USB_BCD = 0x0100,
 };
 
 #if MEOWKEY_ENABLE_DEBUG_HID
 enum {
     ITF_NUM_FIDO_HID = 0,
+    ITF_NUM_MANAGER_VENDOR,
     ITF_NUM_DEBUG_HID,
     ITF_NUM_TOTAL,
 };
 
 enum {
     EPNUM_FIDO_HID = 0x01,
+    EPNUM_MANAGER_VENDOR = 0x03,
     EPNUM_DEBUG_HID = 0x02,
 };
-#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + (2 * TUD_HID_INOUT_DESC_LEN))
+#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + (2 * TUD_HID_INOUT_DESC_LEN) + TUD_VENDOR_DESC_LEN)
 #else
 enum {
     ITF_NUM_FIDO_HID = 0,
+    ITF_NUM_MANAGER_VENDOR,
     ITF_NUM_TOTAL,
 };
 
 enum {
     EPNUM_FIDO_HID = 0x01,
+    EPNUM_MANAGER_VENDOR = 0x03,
 };
-#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_INOUT_DESC_LEN)
+#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_INOUT_DESC_LEN + TUD_VENDOR_DESC_LEN)
 #endif
 
 enum {
@@ -42,15 +46,20 @@ enum {
     STRID_MANUFACTURER,
     STRID_PRODUCT,
     STRID_SERIAL,
+    STRID_FIDO_INTERFACE,
+    STRID_MANAGER_INTERFACE,
+#if MEOWKEY_ENABLE_DEBUG_HID
+    STRID_DEBUG_INTERFACE,
+#endif
 };
 
 static const tusb_desc_device_t desc_device = {
     .bLength = sizeof(tusb_desc_device_t),
     .bDescriptorType = TUSB_DESC_DEVICE,
     .bcdUSB = 0x0200,
-    .bDeviceClass = 0x00,
-    .bDeviceSubClass = 0x00,
-    .bDeviceProtocol = 0x00,
+    .bDeviceClass = TUSB_CLASS_MISC,
+    .bDeviceSubClass = MISC_SUBCLASS_COMMON,
+    .bDeviceProtocol = MISC_PROTOCOL_IAD,
     .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
     .idVendor = USB_VID,
     .idProduct = USB_PID,
@@ -104,17 +113,23 @@ static const uint8_t desc_debug_hid_report[] = {
 static const uint8_t desc_configuration[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
     TUD_HID_INOUT_DESCRIPTOR(ITF_NUM_FIDO_HID,
-                             0,
+                             STRID_FIDO_INTERFACE,
                              HID_ITF_PROTOCOL_NONE,
                              sizeof(desc_hid_report),
                              EPNUM_FIDO_HID,
                              (uint8_t)(0x80u | EPNUM_FIDO_HID),
                              CFG_TUD_HID_EP_BUFSIZE,
                              5)
+    ,
+    TUD_VENDOR_DESCRIPTOR(ITF_NUM_MANAGER_VENDOR,
+                          STRID_MANAGER_INTERFACE,
+                          EPNUM_MANAGER_VENDOR,
+                          (uint8_t)(0x80u | EPNUM_MANAGER_VENDOR),
+                          CFG_TUD_VENDOR_EPSIZE)
 #if MEOWKEY_ENABLE_DEBUG_HID
     ,
     TUD_HID_INOUT_DESCRIPTOR(ITF_NUM_DEBUG_HID,
-                             0,
+                             STRID_DEBUG_INTERFACE,
                              HID_ITF_PROTOCOL_NONE,
                              sizeof(desc_debug_hid_report),
                              EPNUM_DEBUG_HID,
@@ -129,6 +144,11 @@ static const char *const string_desc_arr[] = {
     "MeowKey",
     MEOWKEY_USB_PRODUCT_NAME,
     NULL,
+    "MeowKey FIDO Interface",
+    "MeowKey Management Interface",
+#if MEOWKEY_ENABLE_DEBUG_HID
+    "MeowKey Debug Interface",
+#endif
 };
 
 static uint16_t s_desc_str[32 + 1];

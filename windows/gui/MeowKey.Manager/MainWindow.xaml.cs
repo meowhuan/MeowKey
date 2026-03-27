@@ -34,6 +34,7 @@ public sealed partial class MainWindow : Window
 
         InitializeComponent();
         ApplyStaticLocalization();
+        _repository.SnapshotChanged += OnRepositorySnapshotChanged;
         TryApplyWindowBackdrop();
         Activated += OnWindowActivated;
         TryResizeWindow(1360, 900);
@@ -205,5 +206,10 @@ public sealed partial class MainWindow : Window
         {
             // Ignore resize failures on older environments.
         }
+    }
+
+    private void OnRepositorySnapshotChanged(object? sender, EventArgs e)
+    {
+        ApplySnapshot(_repository.Snapshot);
     }
 }
