@@ -31,6 +31,18 @@ public sealed partial class DevicesPage : Page
         Repository.RecordAction("Activity.Category.devices", "Action.Devices.Probe");
     }
 
+    private void OnSelectDevice(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string devicePath } || string.IsNullOrWhiteSpace(devicePath))
+        {
+            return;
+        }
+
+        Repository.SelectDevice(devicePath);
+        Repository.RecordAction("Activity.Category.devices", "Action.Devices.Select");
+        Frame.Navigate(typeof(DevicesPage));
+    }
+
     private void ApplyLocalization()
     {
         PageTitleText.Text = _localizer["Page.Devices.Title"];

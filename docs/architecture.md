@@ -176,8 +176,9 @@ WinUI manager:
 Rust manager shell:
 
 - keeps the Linux-facing desktop surface on `Rust + egui/eframe`
-- remains the practical maintenance and bring-up workbench for Debug HID flows
-- still covers diagnostics, credential summaries, and registration / assertion tests
+- can now read the formal management channel for credential summaries and security posture
+- still remains the practical maintenance and bring-up workbench for Debug HID flows
+- still covers diagnostics and registration / assertion tests
 
 The browser UI and Rust shell remain development and maintenance frontends, while the WinUI manager is the product-facing desktop shell. None of them are generic FIDO clients.
 
@@ -357,7 +358,8 @@ WinUI 管理器：
 Rust 管理器壳层：
 
 - 继续承担 Linux 侧 `Rust + egui/eframe` 桌面界面
+- 现在已经能读取正式管理通道里的凭据摘要和安全姿态
 - 仍然是 Debug HID 维护与 bring-up 的实用工作台
-- 继续覆盖诊断、凭据摘要、注册 / 断言测试等能力
+- 继续覆盖诊断、注册 / 断言测试等能力
 
 浏览器 WebUI 和 Rust 壳层仍然属于开发 / 维护前端，WinUI 管理器则是面向产品形态的桌面壳层。但它们都不是通用 FIDO 客户端。

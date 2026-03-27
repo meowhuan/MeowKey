@@ -157,7 +157,7 @@ cargo run
 
 Important notes:
 
-- the browser UI and the Rust shell depend on Debug HID
+- the browser UI depends on Debug HID; the Rust shell can still read the formal management channel without it, but CTAP bring-up and destructive maintenance flows remain Debug-HID-only
 - the WinUI shell is the main Windows manager surface and now lives in `windows/gui/MeowKey.Manager/`
 - the Linux desktop surface currently stays on Rust + egui/eframe
 - a hardened build cannot be used with the browser UI or the Rust maintenance shell
@@ -369,7 +369,7 @@ cargo run
 
 需要注意：
 
-- 浏览器调试台和 Rust 壳层都依赖 Debug HID
+- 浏览器调试台依赖 Debug HID；Rust 壳层即使没有它也能读取正式管理通道，但 CTAP 联调和破坏性维护动作仍然只走 Debug HID
 - WinUI 壳层是新的 Windows 主管理界面，项目路径为 `windows/gui/MeowKey.Manager/`
 - Linux 桌面面当前继续使用 Rust + egui/eframe
 - 浏览器调试台和 Rust 维护壳层都不能直接配合硬化构建使用

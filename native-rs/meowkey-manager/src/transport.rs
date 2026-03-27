@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use crate::{
     cbor::{CborValue, decode as decode_cbor, encode as encode_cbor},
+    manager_usb::ManagerUsbDevice,
     models::{
         AssertionForm, AssertionRequestSnapshot, AssertionResult, CredentialRecord, InfoSnapshot,
         InitDeviceVersion, InitSnapshot, MakeCredentialRequestSnapshot, MakeCredentialResult,
@@ -43,6 +44,12 @@ const DIAG_ACTION_SET_UP_CONFIG: u8 = 0x06;
 const CTAP2_MAKE_CREDENTIAL: u8 = 0x01;
 const CTAP2_GET_ASSERTION: u8 = 0x02;
 const CTAP2_GET_INFO: u8 = 0x04;
+
+const MANAGER_PROTOCOL_VERSION: u8 = 0x01;
+const MANAGER_HEADER_SIZE: usize = 10;
+const MANAGER_CMD_GET_SNAPSHOT: u8 = 0x01;
+const MANAGER_CMD_GET_CREDENTIAL_SUMMARIES: u8 = 0x03;
+const MANAGER_CMD_GET_SECURITY_STATE: u8 = 0x04;
 
 const CTAP2_STATUS_OK: u8 = 0x00;
 const CTAP2_ERR_INVALID_CBOR: u8 = 0x12;
@@ -82,6 +89,14 @@ pub trait ManagerBackend {
 
     fn clear_credentials(&mut self, _log: Logger<'_>) -> Result<String> {
         Ok("当前后端不支持固件凭据擦除。".to_string())
+    }
+
+    fn get_formal_credential_catalog(&mut self, _log: Logger<'_>) -> Result<Value> {
+        bail!("当前后端不支持正式管理凭据目录。")
+    }
+
+    fn get_formal_security_state(&mut self, _log: Logger<'_>) -> Result<Value> {
+        bail!("当前后端不支持正式管理安全状态。")
     }
 
     #[allow(dead_code)]
@@ -175,6 +190,100 @@ impl ManagerBackend for PreviewBackend {
             capabilities: vec!["支持 CBOR".to_string(), "无旧版 MSG".to_string()],
             state_label: "已连接".to_string(),
         })
+    }
+
+    fn get_formal_credential_catalog(&mut self, log: Logger<'_>) -> Result<Value> {
+        log("管理", "预览后端返回正式凭据目录示例。");
+        Ok(json!({
+            "protocolVersion": MANAGER_PROTOCOL_VERSION,
+            "pages": 1,
+            "total": 2,
+            "capacity": 16,
+            "storeFormatVersion": 6,
+            "returned": 2,
+            "items": [
+                {
+                    "slot": 0,
+                    "credentialIdLength": 64,
+                    "credentialIdPrefix": "99233e84a981d740...",
+                    "signCount": 4,
+                    "discoverable": true,
+                    "credRandomReady": true,
+                    "rpIdPreview": "meowkey.local",
+                    "rpIdLength": 13,
+                    "userNamePreview": "Meowhuan",
+                    "userNameLength": 8,
+                    "displayNamePreview": "Meowhuan Preview",
+                    "displayNameLength": 16
+                },
+                {
+                    "slot": 3,
+                    "credentialIdLength": 64,
+                    "credentialIdPrefix": "99343e85a982d741...",
+                    "signCount": 1,
+                    "discoverable": false,
+                    "credRandomReady": true,
+                    "rpIdPreview": "lab.meowkey.dev",
+                    "rpIdLength": 15,
+                    "userNamePreview": "cat-admin",
+                    "userNameLength": 9,
+                    "displayNamePreview": "Lab Admin",
+                    "displayNameLength": 9
+                }
+            ]
+        }))
+    }
+
+    fn get_formal_security_state(&mut self, log: Logger<'_>) -> Result<Value> {
+        let up = default_user_presence_config();
+        log("管理", "预览后端返回正式安全状态示例。");
+        Ok(json!({
+            "protocolVersion": MANAGER_PROTOCOL_VERSION,
+            "build": {
+                "flavor": "preview",
+                "version": "1.0.0-preview",
+                "signedBootEnabled": false,
+                "antiRollbackEnabled": false,
+                "antiRollbackVersion": 0
+            },
+            "board": {
+                "detected": true,
+                "code": "0x52503235",
+                "summary": "Preview RP2350 board"
+            },
+            "interfaces": {
+                "fidoHid": true,
+                "management": true,
+                "debugHid": true
+            },
+            "ctap": {
+                "configured": true
+            },
+            "pin": {
+                "configured": false,
+                "retries": 8
+            },
+            "userPresence": {
+                "sessionOverride": false,
+                "effective": up,
+                "persisted": up
+            },
+            "otp": {
+                "bootFlags0": {
+                    "available": false,
+                    "raw": "0x000000",
+                    "rollbackRequired": false,
+                    "flashBootDisabled": false,
+                    "picobootDisabled": false
+                },
+                "bootFlags1": {
+                    "available": false,
+                    "raw": "0x000000",
+                    "keyValidMask": "0x0",
+                    "keyInvalidMask": "0x0"
+                }
+            }
+        }))
     }
 
     fn get_user_presence(&mut self, log: Logger<'_>) -> Result<UserPresenceConfigSnapshot> {
@@ -443,6 +552,151 @@ pub struct DebugHidBackend {
     product_id: u16,
 }
 
+#[derive(Default)]
+pub struct ManagerChannelBackend {
+    device: Option<ManagerUsbDevice>,
+}
+
+impl ManagerBackend for ManagerChannelBackend {
+    fn backend_name(&self) -> &'static str {
+        "Rust 管理通道后端"
+    }
+
+    fn connect(&mut self, log: Logger<'_>) -> Result<SessionSnapshot> {
+        let device = ManagerUsbDevice::open()?;
+        let snapshot = send_manager_command_json(&device, MANAGER_CMD_GET_SNAPSHOT, &[], log)?;
+        let device_name = snapshot
+            .get("deviceName")
+            .and_then(Value::as_str)
+            .unwrap_or("MeowKey")
+            .to_string();
+        let transport = snapshot
+            .get("transport")
+            .and_then(Value::as_str)
+            .unwrap_or("manager-bulk-v1")
+            .to_string();
+        let usb = format_usb_identity(&snapshot);
+
+        log(
+            "管理",
+            &format!(
+                "已连接正式管理接口\n设备: {device_name}\nUSB: {usb}\ntransport: {transport}"
+            ),
+        );
+
+        self.device = Some(device);
+        Ok(SessionSnapshot {
+            backend_name: self.backend_name().to_string(),
+            device_name,
+            device_id: usb,
+            channel_id: transport,
+            capabilities: vec![
+                "formal-management".to_string(),
+                "0x03 credential summaries".to_string(),
+                "0x04 security state".to_string(),
+            ],
+            state_label: "管理通道已连接".to_string(),
+        })
+    }
+
+    fn disconnect(&mut self) -> Result<()> {
+        self.device = None;
+        Ok(())
+    }
+
+    fn get_formal_credential_catalog(&mut self, log: Logger<'_>) -> Result<Value> {
+        let device = self
+            .device
+            .as_ref()
+            .ok_or_else(|| anyhow!("请先连接正式管理通道。"))?;
+
+        let mut cursor = 0u16;
+        let limit = 16u16;
+        let mut pages = 0u32;
+        let mut collected = Vec::new();
+
+        loop {
+            let page = send_manager_command_json(
+                device,
+                MANAGER_CMD_GET_CREDENTIAL_SUMMARIES,
+                &build_credential_page_payload(cursor, limit),
+                log,
+            )?;
+            pages += 1;
+
+            if let Some(items) = page.get("items").and_then(Value::as_array) {
+                collected.extend(items.iter().cloned());
+            }
+
+            let has_more = page
+                .get("hasMore")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if !has_more {
+                return Ok(json!({
+                    "protocolVersion": page.get("protocolVersion").and_then(Value::as_u64).unwrap_or(MANAGER_PROTOCOL_VERSION as u64),
+                    "pages": pages,
+                    "total": page.get("total").and_then(Value::as_u64).unwrap_or(collected.len() as u64),
+                    "capacity": page.get("capacity").and_then(Value::as_u64).unwrap_or(0),
+                    "storeFormatVersion": page.get("storeFormatVersion").and_then(Value::as_u64).unwrap_or(0),
+                    "returned": collected.len(),
+                    "items": collected
+                }));
+            }
+
+            let next_cursor = page
+                .get("nextCursor")
+                .and_then(Value::as_u64)
+                .unwrap_or(cursor as u64) as u16;
+            if next_cursor <= cursor {
+                bail!("正式凭据目录分页没有向前推进。");
+            }
+
+            cursor = next_cursor;
+        }
+    }
+
+    fn get_formal_security_state(&mut self, log: Logger<'_>) -> Result<Value> {
+        let device = self
+            .device
+            .as_ref()
+            .ok_or_else(|| anyhow!("请先连接正式管理通道。"))?;
+        send_manager_command_json(device, MANAGER_CMD_GET_SECURITY_STATE, &[], log)
+    }
+
+    fn init_channel(
+        &mut self,
+        _session: &mut SessionSnapshot,
+        _log: Logger<'_>,
+    ) -> Result<InitSnapshot> {
+        bail!("正式管理通道后端不支持 CTAPHID 初始化。")
+    }
+
+    fn get_info(&mut self, _session: &SessionSnapshot, _log: Logger<'_>) -> Result<InfoSnapshot> {
+        bail!("正式管理通道后端不支持 authenticatorGetInfo。")
+    }
+
+    fn make_credential(
+        &mut self,
+        _session: &SessionSnapshot,
+        _form: &RegisterForm,
+        _existing: &[CredentialRecord],
+        _log: Logger<'_>,
+    ) -> Result<MakeCredentialResult> {
+        bail!("正式管理通道后端不支持 makeCredential。")
+    }
+
+    fn get_assertion(
+        &mut self,
+        _session: &SessionSnapshot,
+        _form: &AssertionForm,
+        _credentials: &mut [CredentialRecord],
+        _log: Logger<'_>,
+    ) -> Result<AssertionResult> {
+        bail!("正式管理通道后端不支持 getAssertion。")
+    }
+}
+
 pub fn default_register_form() -> RegisterForm {
     RegisterForm {
         rp_id: "meowkey.local".to_string(),
@@ -462,7 +716,7 @@ pub fn default_assertion_form() -> AssertionForm {
 
 pub fn default_log_body() -> String {
     format!(
-        "Rust 原生管理器已切到双后端模式。\n可连真实调试 HID，也可切回预览后端。\n当前时间标签：{}",
+        "Rust 原生管理器已切到三后端模式。\n可连正式管理通道、真实调试 HID，也可切回预览后端。\n当前时间标签：{}",
         PreviewBackend::now_label()
     )
 }
@@ -1310,6 +1564,94 @@ fn encode_user_presence_update(config: &UserPresenceConfigSnapshot) -> Result<Ve
         request_timeout[0],
         request_timeout[1],
     ])
+}
+
+fn send_manager_command_json(
+    device: &ManagerUsbDevice,
+    command: u8,
+    payload: &[u8],
+    log: Logger<'_>,
+) -> Result<Value> {
+    let response = send_manager_command(device, command, payload, log)?;
+    serde_json::from_slice(&response).context("解析正式管理 JSON 失败")
+}
+
+fn send_manager_command(
+    device: &ManagerUsbDevice,
+    command: u8,
+    payload: &[u8],
+    log: Logger<'_>,
+) -> Result<Vec<u8>> {
+    log(
+        "管理",
+        &format!("发送正式管理命令 0x{command:02x}，payload={} byte(s)", payload.len()),
+    );
+
+    let request = build_manager_request(command, payload);
+    let response = device.send_command(&request)?;
+    let payload = parse_manager_response(&response, command)?;
+
+    log(
+        "管理",
+        &format!("收到正式管理命令 0x{command:02x} 响应，payload={} byte(s)", payload.len()),
+    );
+    Ok(payload)
+}
+
+fn build_manager_request(command: u8, payload: &[u8]) -> Vec<u8> {
+    let mut request = vec![0u8; MANAGER_HEADER_SIZE + payload.len()];
+    request[..4].copy_from_slice(b"MKM1");
+    request[4] = MANAGER_PROTOCOL_VERSION;
+    request[5] = command;
+    request[8..10].copy_from_slice(&(payload.len() as u16).to_le_bytes());
+    request[MANAGER_HEADER_SIZE..].copy_from_slice(payload);
+    request
+}
+
+fn parse_manager_response(response: &[u8], command: u8) -> Result<Vec<u8>> {
+    if response.len() < MANAGER_HEADER_SIZE {
+        bail!("正式管理响应头长度不足。");
+    }
+    if &response[..4] != b"MKM1" {
+        bail!("正式管理响应 magic 不匹配。");
+    }
+    if response[4] != MANAGER_PROTOCOL_VERSION {
+        bail!("正式管理协议版本不匹配: {}", response[4]);
+    }
+    if response[6] != command {
+        bail!("正式管理响应命令不匹配: 0x{:02x}", response[6]);
+    }
+    if response[5] != 0 {
+        bail!("正式管理命令失败，状态码=0x{:02x}", response[5]);
+    }
+
+    let payload_length = u16::from_le_bytes([response[8], response[9]]) as usize;
+    if MANAGER_HEADER_SIZE + payload_length > response.len() {
+        bail!("正式管理响应负载被截断。");
+    }
+
+    Ok(response[MANAGER_HEADER_SIZE..(MANAGER_HEADER_SIZE + payload_length)].to_vec())
+}
+
+fn build_credential_page_payload(cursor: u16, limit: u16) -> [u8; 4] {
+    let mut payload = [0u8; 4];
+    payload[..2].copy_from_slice(&cursor.to_le_bytes());
+    payload[2..].copy_from_slice(&limit.to_le_bytes());
+    payload
+}
+
+fn format_usb_identity(snapshot: &Value) -> String {
+    let vid = snapshot
+        .get("usb")
+        .and_then(|usb| usb.get("vid"))
+        .and_then(Value::as_str)
+        .unwrap_or("0x0000");
+    let pid = snapshot
+        .get("usb")
+        .and_then(|usb| usb.get("pid"))
+        .and_then(Value::as_str)
+        .unwrap_or("0x0000");
+    format!("{vid}:{pid}")
 }
 
 fn normalize_hex(input: &str) -> Result<String> {

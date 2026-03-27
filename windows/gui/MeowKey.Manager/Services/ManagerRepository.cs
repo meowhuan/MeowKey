@@ -8,6 +8,8 @@ public sealed class ManagerRepository
 {
     private readonly LocalizationService _localizer = LocalizationService.Current;
     private readonly ManagerDeviceService _deviceService = new();
+    private IReadOnlyList<ConnectedDeviceInfo> _devices = Array.Empty<ConnectedDeviceInfo>();
+    private string? _selectedDevicePath;
 
     public ManagerRepository()
     {
@@ -35,19 +37,29 @@ public sealed class ManagerRepository
 
     public void Refresh()
     {
-        IReadOnlyList<ConnectedDeviceInfo> devices;
-
         try
         {
-            devices = _deviceService.EnumerateDevices();
+            _devices = _deviceService.EnumerateDevices();
         }
         catch (Exception ex)
         {
-            devices = Array.Empty<ConnectedDeviceInfo>();
+            _devices = Array.Empty<ConnectedDeviceInfo>();
             ActivityEntries.Insert(0, new ActivityEntry(DateTime.Now, _localizer["Activity.Category.debug"], ex.Message));
         }
 
-        Snapshot = BuildSnapshot(devices);
+        Snapshot = BuildSnapshot(_devices);
+        SnapshotChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void SelectDevice(string devicePath)
+    {
+        if (string.IsNullOrWhiteSpace(devicePath) || _devices.Count == 0)
+        {
+            return;
+        }
+
+        _selectedDevicePath = devicePath;
+        Snapshot = BuildSnapshot(_devices);
         SnapshotChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -59,14 +71,15 @@ public sealed class ManagerRepository
     private ManagerSnapshot BuildSnapshot(IReadOnlyList<ConnectedDeviceInfo> devices)
     {
         var t = _localizer;
-        var currentDevice = devices.FirstOrDefault();
+        var currentDevice = ResolveSelectedDevice(devices);
         var appVersion = GetApplicationVersion();
         var headerSummaries = BuildHeaderSummaries(currentDevice, t);
         var overviewFacts = BuildOverviewFacts(currentDevice, t);
-        var deviceEntries = BuildDeviceEntries(devices, t);
+        var deviceEntries = BuildDeviceEntries(devices, currentDevice?.DevicePath, t);
         var credentialCatalogFacts = BuildCredentialCatalogFacts(currentDevice, t);
         var credentialCatalog = BuildCredentialCatalog(currentDevice, t);
         var securityPolicies = BuildSecurityPolicies(currentDevice, t);
+        var userPresenceSections = BuildUserPresenceSections(currentDevice, t);
         var credentialCapabilities = BuildCredentialCapabilities(currentDevice, t);
         var aboutItems = BuildAboutItems(currentDevice, appVersion, t);
 
@@ -78,6 +91,7 @@ public sealed class ManagerRepository
             ChannelLabel = t["App.ChannelLabel"],
             WindowsSurface = t["App.WindowsSurface"],
             LinuxSurface = t["App.LinuxSurface"],
+            SelectedDevice = currentDevice,
             HeaderSummaries = headerSummaries,
             OverviewFacts = overviewFacts,
             DashboardReadiness =
@@ -104,6 +118,7 @@ public sealed class ManagerRepository
             CredentialCatalogFacts = credentialCatalogFacts,
             CredentialCatalog = credentialCatalog,
             SecurityPolicies = securityPolicies,
+            UserPresenceSections = userPresenceSections,
             MaintenanceCommands =
             [
                 new MaintenanceCommand(t["Debug.Command.InstallDriver.Label"], "powershell -ExecutionPolicy Bypass -File .\\windows\\driver\\manager-winusb\\install-manager-driver.ps1", t["Debug.Command.InstallDriver.Detail"]),
@@ -113,6 +128,27 @@ public sealed class ManagerRepository
             ],
             AboutItems = aboutItems
         };
+    }
+
+    private ConnectedDeviceInfo? ResolveSelectedDevice(IReadOnlyList<ConnectedDeviceInfo> devices)
+    {
+        if (devices.Count == 0)
+        {
+            _selectedDevicePath = null;
+            return null;
+        }
+
+        var selected = !string.IsNullOrWhiteSpace(_selectedDevicePath)
+            ? devices.FirstOrDefault(device => string.Equals(device.DevicePath, _selectedDevicePath, StringComparison.OrdinalIgnoreCase))
+            : null;
+        if (selected is not null)
+        {
+            return selected;
+        }
+
+        selected = devices[0];
+        _selectedDevicePath = selected.DevicePath;
+        return selected;
     }
 
     private IReadOnlyList<SummaryCard> BuildHeaderSummaries(ConnectedDeviceInfo? device, LocalizationService t)
@@ -159,13 +195,16 @@ public sealed class ManagerRepository
         ];
     }
 
-    private IReadOnlyList<DeviceEntry> BuildDeviceEntries(IReadOnlyList<ConnectedDeviceInfo> devices, LocalizationService t)
+    private IReadOnlyList<DeviceEntry> BuildDeviceEntries(IReadOnlyList<ConnectedDeviceInfo> devices,
+                                                          string? selectedDevicePath,
+                                                          LocalizationService t)
     {
         if (devices.Count == 0)
         {
             return
             [
                 new DeviceEntry(
+                    string.Empty,
                     t["Devices.Entry.None.Name"],
                     t["Devices.Entry.None.Role"],
                     t["Devices.Item.FirmwareLabel"],
@@ -175,22 +214,32 @@ public sealed class ManagerRepository
                     t["Devices.Item.TransportLabel"],
                     t["Summary.Value.Offline"],
                     t["Summary.Device.Disconnected"],
-                    t["Devices.Entry.None.Detail"])
+                    t["Devices.Entry.None.Detail"],
+                    false,
+                    t["Devices.Selection.Unavailable"])
             ];
         }
 
         return devices
-            .Select(device => new DeviceEntry(
-                device.DeviceName,
-                device.ManagementAvailable ? t["Devices.Role.Managed"] : t["Devices.Role.AuthOnly"],
-                t["Devices.Item.FirmwareLabel"],
-                $"{device.FirmwareVersion} ({device.BuildFlavor})",
-                t["Devices.Item.BoardLabel"],
-                device.BoardCode,
-                t["Devices.Item.TransportLabel"],
-                device.Transport,
-                device.DebugHidEnabled ? t["Devices.State.DebugPresent"] : t["Devices.State.ManagedOnly"],
-                device.BoardSummary))
+            .Select(device =>
+            {
+                var isSelected = string.Equals(device.DevicePath, selectedDevicePath, StringComparison.OrdinalIgnoreCase);
+
+                return new DeviceEntry(
+                    device.DevicePath,
+                    device.DeviceName,
+                    device.ManagementAvailable ? t["Devices.Role.Managed"] : t["Devices.Role.AuthOnly"],
+                    t["Devices.Item.FirmwareLabel"],
+                    $"{device.FirmwareVersion} ({device.BuildFlavor})",
+                    t["Devices.Item.BoardLabel"],
+                    device.BoardCode,
+                    t["Devices.Item.TransportLabel"],
+                    device.Transport,
+                    device.DebugHidEnabled ? t["Devices.State.DebugPresent"] : t["Devices.State.ManagedOnly"],
+                    device.BoardSummary,
+                    isSelected,
+                    isSelected ? t["Devices.Selection.Current"] : t["Devices.Selection.Switch"]);
+            })
             .ToArray();
     }
 
@@ -253,7 +302,24 @@ public sealed class ManagerRepository
                 ]);
                 var footer = $"{displayName} · {t["Credentials.Catalog.IdPrefix"]} {item.CredentialIdPrefix}";
 
-                return new CredentialCatalogItem(userTitle, rpSubtitle, detail, footer);
+                return new CredentialCatalogItem(
+                    userTitle,
+                    rpSubtitle,
+                    detail,
+                    footer,
+                    item.Slot,
+                    item.SignCount,
+                    item.Discoverable,
+                    item.CredRandomReady,
+                    item.CredentialIdPrefix,
+                    item.CredentialIdLength,
+                    item.RpIdPreview,
+                    item.RpIdLength,
+                    item.UserNamePreview,
+                    item.UserNameLength,
+                    item.DisplayNamePreview,
+                    item.DisplayNameLength,
+                    t["Page.Credentials.Action.ViewDetails"]);
             })
             .ToArray();
     }
@@ -342,6 +408,74 @@ public sealed class ManagerRepository
             new PolicyItem(t["Security.Policy5.Title"], flags0Value, flags0Detail),
             new PolicyItem(t["Security.Policy6.Title"], flags1Value, flags1Detail)
         ];
+    }
+
+    private IReadOnlyList<UserPresenceSection> BuildUserPresenceSections(ConnectedDeviceInfo? device, LocalizationService t)
+    {
+        if (device?.SecurityState is null)
+        {
+            return
+            [
+                BuildUnavailableUserPresenceSection(t["Security.Label.Effective"], t["Security.UserPresence.EffectiveUnavailable"], t),
+                BuildUnavailableUserPresenceSection(t["Security.Label.Persisted"], t["Security.UserPresence.PersistedUnavailable"], t)
+            ];
+        }
+
+        var sessionOverride = device.SecurityState.UserPresenceSessionOverride;
+
+        return
+        [
+            BuildUserPresenceSection(
+                t["Security.Label.Effective"],
+                device.SecurityState.EffectiveUserPresence,
+                sessionOverride ? t["Security.UserPresence.EffectiveOverrideDetail"] : t["Security.UserPresence.EffectiveDetail"],
+                t),
+            BuildUserPresenceSection(
+                t["Security.Label.Persisted"],
+                device.SecurityState.PersistedUserPresence,
+                sessionOverride ? t["Security.UserPresence.PersistedOverrideDetail"] : t["Security.UserPresence.PersistedDetail"],
+                t)
+        ];
+    }
+
+    private UserPresenceSection BuildUnavailableUserPresenceSection(string title, string detail, LocalizationService t)
+    {
+        return new UserPresenceSection(
+            title,
+            t["Security.Value.Unavailable"],
+            detail,
+            [
+                new InfoItem(t["Security.Label.Enabled"], t["Security.Value.Unavailable"]),
+                new InfoItem(t["Security.Label.Source"], t["Security.Value.Unavailable"]),
+                new InfoItem(t["Security.Label.TapCount"], t["Security.Value.Unavailable"]),
+                new InfoItem(t["Security.Label.GestureWindow"], t["Security.Value.Unavailable"]),
+                new InfoItem(t["Security.Label.RequestTimeout"], t["Security.Value.Unavailable"]),
+                new InfoItem(t["Security.Label.Gpio"], t["Security.Value.Unavailable"])
+            ]);
+    }
+
+    private UserPresenceSection BuildUserPresenceSection(string title,
+                                                         UserPresenceConfigInfo config,
+                                                         string detail,
+                                                         LocalizationService t)
+    {
+        var status = $"{config.Source} · {(config.Enabled ? t["Security.Value.Enabled"] : t["Security.Value.Disabled"])}";
+        var gpioDetail = config.Source.Equals("gpio", StringComparison.OrdinalIgnoreCase)
+            ? $"{t["Security.Label.Gpio"]} {config.GpioPin} · {(config.GpioActiveLow ? t["Security.Value.ActiveLow"] : t["Security.Value.ActiveHigh"])}"
+            : t["Security.Value.NotApplicable"];
+
+        return new UserPresenceSection(
+            title,
+            status,
+            detail,
+            [
+                new InfoItem(t["Security.Label.Enabled"], config.Enabled ? t["Security.Value.Enabled"] : t["Security.Value.Disabled"]),
+                new InfoItem(t["Security.Label.Source"], config.Source),
+                new InfoItem(t["Security.Label.TapCount"], config.TapCount.ToString()),
+                new InfoItem(t["Security.Label.GestureWindow"], $"{config.GestureWindowMs} ms"),
+                new InfoItem(t["Security.Label.RequestTimeout"], $"{config.RequestTimeoutMs} ms"),
+                new InfoItem(t["Security.Label.Gpio"], gpioDetail)
+            ]);
     }
 
     private string BuildUserPresenceSummary(UserPresenceConfigInfo? config, string fallbackSource, int fallbackTapCount, LocalizationService t)

@@ -37,6 +37,8 @@ public sealed partial class SecurityPage : Page
         PageDescriptionText.Text = _localizer["Page.Security.Description"];
         RefreshSecurityButton.Content = _localizer["Page.Security.Action.Refresh"];
         KeepDebugLimitedButton.Content = _localizer["Page.Security.Action.KeepDebugLimited"];
+        UserPresenceTitleText.Text = _localizer["Page.Security.UserPresenceTitle"];
+        UserPresenceDescriptionText.Text = _localizer["Page.Security.UserPresenceDescription"];
         RecommendationTitleText.Text = _localizer["Page.Security.RecommendationTitle"];
         RecommendationDescriptionText.Text = _localizer["Page.Security.RecommendationDescription"];
     }

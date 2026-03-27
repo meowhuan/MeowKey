@@ -73,6 +73,12 @@
                                     <TextBlock Text="{x:Bind State}"
                                                Foreground="{ThemeResource AppMutedForegroundBrush}" />
                                     <TextBlock Text="{x:Bind Detail}" TextWrapping="WrapWholeWords" />
+                                    <Button Content="{x:Bind SelectionLabel}"
+                                            Style="{StaticResource SecondaryButtonStyle}"
+                                            HorizontalAlignment="Left"
+                                            Margin="0,6,0,0"
+                                            Tag="{x:Bind DevicePath}"
+                                            Click="OnSelectDevice" />
                                 </StackPanel>
                             </Grid>
                         </Border>

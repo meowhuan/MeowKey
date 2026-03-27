@@ -47,6 +47,7 @@ public sealed class PlatformChoice
 public sealed class DeviceEntry
 {
     public DeviceEntry(
+        string devicePath,
         string name,
         string role,
         string firmwareLabel,
@@ -56,8 +57,11 @@ public sealed class DeviceEntry
         string transportLabel,
         string transport,
         string state,
-        string detail)
+        string detail,
+        bool isSelected,
+        string selectionLabel)
     {
+        DevicePath = devicePath;
         Name = name;
         Role = role;
         FirmwareLabel = firmwareLabel;
@@ -68,8 +72,11 @@ public sealed class DeviceEntry
         Transport = transport;
         State = state;
         Detail = detail;
+        IsSelected = isSelected;
+        SelectionLabel = selectionLabel;
     }
 
+    public string DevicePath { get; }
     public string Name { get; }
     public string Role { get; }
     public string FirmwareLabel { get; }
@@ -80,6 +87,8 @@ public sealed class DeviceEntry
     public string Transport { get; }
     public string State { get; }
     public string Detail { get; }
+    public bool IsSelected { get; }
+    public string SelectionLabel { get; }
 }
 
 public sealed class CapabilityItem
@@ -98,18 +107,76 @@ public sealed class CapabilityItem
 
 public sealed class CredentialCatalogItem
 {
-    public CredentialCatalogItem(string title, string subtitle, string detail, string footer)
+    public CredentialCatalogItem(string title,
+                                 string subtitle,
+                                 string detail,
+                                 string footer,
+                                 int slot,
+                                 int signCount,
+                                 bool discoverable,
+                                 bool credRandomReady,
+                                 string credentialIdPrefix,
+                                 int credentialIdLength,
+                                 string rpIdPreview,
+                                 int rpIdLength,
+                                 string userNamePreview,
+                                 int userNameLength,
+                                 string displayNamePreview,
+                                 int displayNameLength,
+                                 string detailsLabel)
     {
         Title = title;
         Subtitle = subtitle;
         Detail = detail;
         Footer = footer;
+        Slot = slot;
+        SignCount = signCount;
+        Discoverable = discoverable;
+        CredRandomReady = credRandomReady;
+        CredentialIdPrefix = credentialIdPrefix;
+        CredentialIdLength = credentialIdLength;
+        RpIdPreview = rpIdPreview;
+        RpIdLength = rpIdLength;
+        UserNamePreview = userNamePreview;
+        UserNameLength = userNameLength;
+        DisplayNamePreview = displayNamePreview;
+        DisplayNameLength = displayNameLength;
+        DetailsLabel = detailsLabel;
     }
 
     public string Title { get; }
     public string Subtitle { get; }
     public string Detail { get; }
     public string Footer { get; }
+    public int Slot { get; }
+    public int SignCount { get; }
+    public bool Discoverable { get; }
+    public bool CredRandomReady { get; }
+    public string CredentialIdPrefix { get; }
+    public int CredentialIdLength { get; }
+    public string RpIdPreview { get; }
+    public int RpIdLength { get; }
+    public string UserNamePreview { get; }
+    public int UserNameLength { get; }
+    public string DisplayNamePreview { get; }
+    public int DisplayNameLength { get; }
+    public string DetailsLabel { get; }
+}
+
+public sealed class UserPresenceSection
+{
+    public UserPresenceSection(string title, string status, string detail, IReadOnlyList<InfoItem> rows)
+    {
+        Title = title;
+        Status = status;
+        Detail = detail;
+        Rows = rows;
+    }
+
+    public string Title { get; }
+    public string Status { get; }
+    public string Detail { get; }
+    public IReadOnlyList<InfoItem> Rows { get; }
 }
 
 public sealed class PolicyItem
@@ -177,6 +244,7 @@ public sealed class ManagerSnapshot
     public string ChannelLabel { get; init; } = string.Empty;
     public string WindowsSurface { get; init; } = string.Empty;
     public string LinuxSurface { get; init; } = string.Empty;
+    public ConnectedDeviceInfo? SelectedDevice { get; init; }
     public IReadOnlyList<SummaryCard> HeaderSummaries { get; init; } = Array.Empty<SummaryCard>();
     public IReadOnlyList<InfoItem> OverviewFacts { get; init; } = Array.Empty<InfoItem>();
     public IReadOnlyList<ReadinessItem> DashboardReadiness { get; init; } = Array.Empty<ReadinessItem>();
@@ -187,6 +255,7 @@ public sealed class ManagerSnapshot
     public IReadOnlyList<InfoItem> CredentialCatalogFacts { get; init; } = Array.Empty<InfoItem>();
     public IReadOnlyList<CredentialCatalogItem> CredentialCatalog { get; init; } = Array.Empty<CredentialCatalogItem>();
     public IReadOnlyList<PolicyItem> SecurityPolicies { get; init; } = Array.Empty<PolicyItem>();
+    public IReadOnlyList<UserPresenceSection> UserPresenceSections { get; init; } = Array.Empty<UserPresenceSection>();
     public IReadOnlyList<MaintenanceCommand> MaintenanceCommands { get; init; } = Array.Empty<MaintenanceCommand>();
     public IReadOnlyList<InfoItem> AboutItems { get; init; } = Array.Empty<InfoItem>();
 }

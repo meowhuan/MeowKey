@@ -11,7 +11,7 @@ use crate::models::{
     RegisterForm, SessionSnapshot,
 };
 use crate::transport::{
-    DebugHidBackend, ManagerBackend, PreviewBackend, default_assertion_form, default_log_body,
+    DebugHidBackend, ManagerBackend, ManagerChannelBackend, PreviewBackend, default_assertion_form, default_log_body,
     default_register_form,
 };
 
@@ -32,6 +32,8 @@ pub struct MeowKeyManagerApp {
     last_make_credential: Option<MakeCredentialResult>,
     last_assertion: Option<AssertionResult>,
     diagnostic_output: String,
+    manager_catalog_output: String,
+    manager_security_output: String,
     init_output: String,
     info_output: String,
     make_credential_output: String,
@@ -55,6 +57,8 @@ impl MeowKeyManagerApp {
             last_make_credential: None,
             last_assertion: None,
             diagnostic_output: "还没有固件诊断日志。".to_string(),
+            manager_catalog_output: "还没有正式凭据目录。".to_string(),
+            manager_security_output: "还没有正式安全状态。".to_string(),
             init_output: "还没有初始化响应。".to_string(),
             info_output: "还没有认证器信息。".to_string(),
             make_credential_output: "还没有注册结果。".to_string(),
@@ -106,6 +110,8 @@ impl MeowKeyManagerApp {
         self.last_make_credential = None;
         self.last_assertion = None;
         self.diagnostic_output = "还没有固件诊断日志。".to_string();
+        self.manager_catalog_output = "还没有正式凭据目录。".to_string();
+        self.manager_security_output = "还没有正式安全状态。".to_string();
         self.init_output = "还没有初始化响应。".to_string();
         self.info_output = "还没有认证器信息。".to_string();
         self.make_credential_output = "还没有注册结果。".to_string();
@@ -133,6 +139,14 @@ impl MeowKeyManagerApp {
 
     fn connect_debug_hid(&mut self) {
         self.switch_backend(Box::<DebugHidBackend>::default());
+        match self.collect_backend_logs(|backend, log| backend.connect(log)) {
+            Ok(session) => self.session = Some(session),
+            Err(error) => self.push_log("错误", &error.to_string()),
+        }
+    }
+
+    fn connect_manager_channel(&mut self) {
+        self.switch_backend(Box::<ManagerChannelBackend>::default());
         match self.collect_backend_logs(|backend, log| backend.connect(log)) {
             Ok(session) => self.session = Some(session),
             Err(error) => self.push_log("错误", &error.to_string()),
@@ -328,13 +342,33 @@ impl MeowKeyManagerApp {
         }
     }
 
+    fn refresh_formal_credential_catalog(&mut self) {
+        match self.collect_backend_logs(|backend, log| backend.get_formal_credential_catalog(log)) {
+            Ok(snapshot) => {
+                self.manager_catalog_output = to_pretty_json(&snapshot);
+                self.push_log("管理", "已读取正式管理凭据目录。");
+            }
+            Err(error) => self.push_log("错误", &error.to_string()),
+        }
+    }
+
+    fn refresh_formal_security_state(&mut self) {
+        match self.collect_backend_logs(|backend, log| backend.get_formal_security_state(log)) {
+            Ok(snapshot) => {
+                self.manager_security_output = to_pretty_json(&snapshot);
+                self.push_log("管理", "已读取正式管理安全状态。");
+            }
+            Err(error) => self.push_log("错误", &error.to_string()),
+        }
+    }
+
     fn render_title_bar(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.add_space(8.0);
             ui.vertical(|ui| {
                 ui.label(RichText::new("MeowKey Manager").size(20.0).strong());
                 ui.label(
-                    RichText::new("调试 HID / FIDO 调试管理台")
+                    RichText::new("正式管理通道 / 调试 HID 工作台")
                         .size(12.0)
                         .color(muted_text()),
                 );
@@ -367,6 +401,9 @@ impl MeowKeyManagerApp {
                         "压缩左栏宽度，并保留真实调试 HID / 预览后端切换。",
                     );
                     ui.horizontal_wrapped(|ui| {
+                        action_button(ui, "连接管理通道")
+                            .clicked()
+                            .then(|| self.connect_manager_channel());
                         action_button(ui, "连接调试 HID")
                             .clicked()
                             .then(|| self.connect_debug_hid());
@@ -391,6 +428,12 @@ impl MeowKeyManagerApp {
                         secondary_button(ui, "拉取诊断")
                             .clicked()
                             .then(|| self.fetch_diagnostics());
+                        secondary_button(ui, "正式目录")
+                            .clicked()
+                            .then(|| self.refresh_formal_credential_catalog());
+                        secondary_button(ui, "安全状态")
+                            .clicked()
+                            .then(|| self.refresh_formal_security_state());
                         secondary_button(ui, "列出凭据")
                             .clicked()
                             .then(|| self.list_credentials());
@@ -498,6 +541,21 @@ impl MeowKeyManagerApp {
                             .map(|session| session.state_label.as_str())
                             .unwrap_or("空闲"),
                     );
+                });
+            });
+
+            ui.add_space(12.0);
+
+            ui.columns(2, |columns| {
+                card(&mut columns[0], |ui| {
+                    card_header(ui, "正式凭据目录", "管理通道 0x03 的分页聚合结果。");
+                    copy_toolbar(ui, ctx, "正式凭据目录", &self.manager_catalog_output);
+                    output_panel(ui, "manager-catalog-output", &self.manager_catalog_output, 220.0);
+                });
+                card(&mut columns[1], |ui| {
+                    card_header(ui, "正式安全状态", "管理通道 0x04 返回的结构化安全视图。");
+                    copy_toolbar(ui, ctx, "正式安全状态", &self.manager_security_output);
+                    output_panel(ui, "manager-security-output", &self.manager_security_output, 220.0);
                 });
             });
 

@@ -42,7 +42,7 @@ Important facts that should not be hidden:
 - there are no permission-scoped tokens or RP-scoped authorization rules yet
 - signed boot and anti-rollback remain opt-in and do not by themselves define provisioning or recovery
 - storage still has no wear leveling
-- desktop tools still depend on Debug HID, so the debug path remains intentionally more powerful than the hardened path
+- browser tooling still depends on Debug HID, and the Rust shell still keeps Debug-HID-only maintenance paths, so the debug path remains intentionally more powerful than the hardened path
 
 ### 5. Recommended Use
 
@@ -110,7 +110,7 @@ MeowKey 目前最好按三种模式来理解：
 - 还没有权限范围 token，也没有 RP 绑定的细粒度授权规则
 - signed boot 和 anti-rollback 仍然是可选能力，本身不等于 provisioning / 恢复流程已经完整
 - 存储层仍然没有磨损均衡
-- 桌面工具依赖 Debug HID，因此 debug 路径仍然会比 hardened 路径拥有更多能力
+- 浏览器工具仍然依赖 Debug HID，而 Rust 壳层也还保留 Debug-HID-only 的维护路径，因此 debug 路径仍然会比 hardened 路径拥有更多能力
 
 ### 5. 使用建议
 

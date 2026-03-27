@@ -1,5 +1,6 @@
 mod app;
 mod cbor;
+mod manager_usb;
 mod models;
 mod transport;
 
