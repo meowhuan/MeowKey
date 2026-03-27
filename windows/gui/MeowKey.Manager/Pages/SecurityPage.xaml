@@ -23,8 +23,8 @@
                                 Orientation="Horizontal"
                                 Spacing="8"
                                 VerticalAlignment="Top">
-                        <Button x:Name="PromoteSecureReadyButton"
-                                Click="OnPromoteSecureReady" />
+                        <Button x:Name="RefreshSecurityButton"
+                                Click="OnRefreshSecurity" />
                         <Button x:Name="KeepDebugLimitedButton"
                                 Style="{StaticResource SecondaryButtonStyle}"
                                 Click="OnKeepDebugLimited" />

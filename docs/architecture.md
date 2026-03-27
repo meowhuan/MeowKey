@@ -16,8 +16,8 @@ MeowKey currently has five practical layers:
 
 Boot starts in `src/main.c`:
 
-1. initialize board support, LEDs, diagnostics, and board ID
-2. initialize the CTAP HID state machine
+1. initialize board support, LEDs, diagnostics, security-status logging, and board ID
+2. initialize user presence, the formal management channel, and the CTAP HID state machine
 3. start TinyUSB
 4. run the main loop with `tud_task()`, `ctap_hid_task()`, and LED updates
 
@@ -30,12 +30,23 @@ Incoming HID output reports flow through:
 
 ### 3. USB Interfaces
 
-Development builds enumerate:
+Normal product builds enumerate:
 
 - FIDO HID: `usagePage=0xF1D0`, `usage=0x01`
+- formal management interface on `MI_01`, carried over WinUSB vendor bulk endpoints
+
+Development builds add:
+
 - Debug HID: `usagePage=0xFF00`, `usage=0x01`
 
-When `MEOWKEY_ENABLE_DEBUG_HID` is disabled, only standard FIDO HID remains.
+`src/manager_channel.c` currently keeps the formal management surface intentionally narrow:
+
+- `GET_SNAPSHOT`
+- `GET_CREDENTIAL_SUMMARIES`
+- `GET_SECURITY_STATE`
+- `PING`
+
+That interface is meant for manager-safe inventory and posture reads, not as a clone of Debug HID.
 
 ### 4. CTAPHID Layer
 
@@ -186,8 +197,8 @@ MeowKey 当前可以分成五个主要层次：
 
 启动入口在 `src/main.c`：
 
-1. 初始化板级支持、LED、诊断缓存和板卡 ID
-2. 初始化 CTAP HID 状态机
+1. 初始化板级支持、LED、诊断缓存、安全状态日志和板卡 ID
+2. 初始化 user presence、正式管理通道和 CTAP HID 状态机
 3. 启动 TinyUSB
 4. 在主循环中持续运行 `tud_task()`、`ctap_hid_task()` 和 LED 同步
 
@@ -200,12 +211,23 @@ USB 收到 HID 输出报文后的处理路径为：
 
 ### 3. USB 接口
 
-开发构建默认会枚举两个 HID 接口：
+正常产品构建会枚举：
 
 - FIDO HID：`usagePage=0xF1D0`，`usage=0x01`
+- 正式管理接口：`MI_01` 上的 WinUSB vendor bulk endpoint
+
+开发构建会额外带上：
+
 - Debug HID：`usagePage=0xFF00`，`usage=0x01`
 
-如果关闭 `MEOWKEY_ENABLE_DEBUG_HID`，设备就只保留标准 FIDO HID。
+`src/manager_channel.c` 目前刻意把正式管理面收得很窄：
+
+- `GET_SNAPSHOT`
+- `GET_CREDENTIAL_SUMMARIES`
+- `GET_SECURITY_STATE`
+- `PING`
+
+这个接口的目标是提供管理器可用的 inventory / posture 读取能力，而不是把 Debug HID 原样复制过去。
 
 ### 4. CTAPHID 层
 

@@ -64,6 +64,8 @@ public sealed class ManagerRepository
         var headerSummaries = BuildHeaderSummaries(currentDevice, t);
         var overviewFacts = BuildOverviewFacts(currentDevice, t);
         var deviceEntries = BuildDeviceEntries(devices, t);
+        var credentialCatalogFacts = BuildCredentialCatalogFacts(currentDevice, t);
+        var credentialCatalog = BuildCredentialCatalog(currentDevice, t);
         var securityPolicies = BuildSecurityPolicies(currentDevice, t);
         var credentialCapabilities = BuildCredentialCapabilities(currentDevice, t);
         var aboutItems = BuildAboutItems(currentDevice, appVersion, t);
@@ -99,6 +101,8 @@ public sealed class ManagerRepository
                 new PolicyItem(t["Devices.Policy3.Title"], t["Devices.Policy3.Value"], t["Devices.Policy3.Detail"])
             ],
             CredentialCapabilities = credentialCapabilities,
+            CredentialCatalogFacts = credentialCatalogFacts,
+            CredentialCatalog = credentialCatalog,
             SecurityPolicies = securityPolicies,
             MaintenanceCommands =
             [
@@ -190,11 +194,77 @@ public sealed class ManagerRepository
             .ToArray();
     }
 
+    private IReadOnlyList<InfoItem> BuildCredentialCatalogFacts(ConnectedDeviceInfo? device, LocalizationService t)
+    {
+        if (device is null)
+        {
+            return
+            [
+                new InfoItem(t["Credentials.Catalog.FactStatus"], t["Summary.Value.Unknown"]),
+                new InfoItem(t["Credentials.Catalog.FactEntries"], t["Summary.Value.Unknown"]),
+                new InfoItem(t["Credentials.Catalog.FactStore"], t["Summary.Value.Unknown"])
+            ];
+        }
+
+        var status = !device.CredentialCatalogAvailable
+            ? t["Credentials.Catalog.StatusUnavailable"]
+            : device.CredentialCatalog.Count == 0
+                ? t["Credentials.Catalog.StatusEmpty"]
+                : t["Credentials.Catalog.StatusReady"];
+        var detail = !device.CredentialCatalogAvailable
+            ? t["Credentials.Catalog.DetailUnavailable"]
+            : device.CredentialCatalog.Count == 0
+                ? t["Credentials.Catalog.DetailEmpty"]
+                : t["Credentials.Catalog.DetailReady"];
+
+        return
+        [
+            new InfoItem(t["Credentials.Catalog.FactStatus"], status, detail),
+            new InfoItem(t["Credentials.Catalog.FactEntries"], $"{device.CredentialCatalog.Count}/{device.CredentialCount}", $"{device.CredentialCount}/{device.CredentialCapacity}"),
+            new InfoItem(t["Credentials.Catalog.FactStore"], $"v{device.StoreFormatVersion}", device.Transport)
+        ];
+    }
+
+    private IReadOnlyList<CredentialCatalogItem> BuildCredentialCatalog(ConnectedDeviceInfo? device, LocalizationService t)
+    {
+        if (device is null || !device.CredentialCatalogAvailable || device.CredentialCatalog.Count == 0)
+        {
+            return Array.Empty<CredentialCatalogItem>();
+        }
+
+        return device.CredentialCatalog
+            .Select(item =>
+            {
+                var userTitle = string.IsNullOrWhiteSpace(item.UserNamePreview)
+                    ? t["Credentials.Catalog.NoUser"]
+                    : item.UserNamePreview;
+                var rpSubtitle = string.IsNullOrWhiteSpace(item.RpIdPreview)
+                    ? t["Credentials.Catalog.NoRp"]
+                    : item.RpIdPreview;
+                var displayName = string.IsNullOrWhiteSpace(item.DisplayNamePreview)
+                    ? t["Credentials.Catalog.NoDisplay"]
+                    : item.DisplayNamePreview;
+                var detail = string.Join(" · ",
+                [
+                    $"{t["Credentials.Catalog.Slot"]} {item.Slot}",
+                    $"{t["Credentials.Catalog.SignCount"]} {item.SignCount}",
+                    item.Discoverable ? t["Credentials.Catalog.Discoverable"] : t["Credentials.Catalog.ServerSide"],
+                    item.CredRandomReady ? t["Credentials.Catalog.CredRandomReady"] : t["Credentials.Catalog.CredRandomMissing"]
+                ]);
+                var footer = $"{displayName} · {t["Credentials.Catalog.IdPrefix"]} {item.CredentialIdPrefix}";
+
+                return new CredentialCatalogItem(userTitle, rpSubtitle, detail, footer);
+            })
+            .ToArray();
+    }
+
     private IReadOnlyList<CapabilityItem> BuildCredentialCapabilities(ConnectedDeviceInfo? device, LocalizationService t)
     {
         var countText = device is null
             ? t["Summary.Value.Unknown"]
-            : $"{device.CredentialCount}/{device.CredentialCapacity}";
+            : !device.CredentialCatalogAvailable
+                ? t["Credentials.Catalog.StatusUnavailable"]
+                : $"{device.CredentialCatalog.Count}/{device.CredentialCapacity}";
 
         return
         [
@@ -214,17 +284,105 @@ public sealed class ManagerRepository
                 new PolicyItem(t["Security.Policy1.Title"], t["Summary.Value.Unknown"], t["Security.Policy1.Detail"]),
                 new PolicyItem(t["Security.Policy2.Title"], t["Summary.Value.Unknown"], t["Security.Policy2.Detail"]),
                 new PolicyItem(t["Security.Policy3.Title"], t["Summary.Value.Unknown"], t["Security.Policy3.Detail"]),
-                new PolicyItem(t["Security.Policy4.Title"], t["Summary.Value.Unknown"], t["Security.Policy4.Detail"])
+                new PolicyItem(t["Security.Policy4.Title"], t["Summary.Value.Unknown"], t["Security.Policy4.Detail"]),
+                new PolicyItem(t["Security.Policy5.Title"], t["Summary.Value.Unknown"], t["Security.Value.Unavailable"]),
+                new PolicyItem(t["Security.Policy6.Title"], t["Summary.Value.Unknown"], t["Security.Value.Unavailable"])
             ];
         }
 
+        var security = device.SecurityState;
+        var effectiveUserPresence = security?.EffectiveUserPresence;
+        var persistedUserPresence = security?.PersistedUserPresence;
+        var bootFlags0 = security?.BootFlags0;
+        var bootFlags1 = security?.BootFlags1;
+        var upValue = BuildUserPresenceSummary(effectiveUserPresence, device.UserPresenceSource, device.UserPresenceTapCount, t);
+        var upDetail = BuildUserPresenceDetail(effectiveUserPresence, persistedUserPresence, device.UserPresenceSessionOverride, t);
+        var pinValue = security?.PinConfigured == true || device.PinConfigured
+            ? t["Security.Pin.Configured"]
+            : t["Security.Pin.NotConfigured"];
+        var pinRetries = security?.PinRetries ?? device.PinRetries;
+        var bootValue = (security?.SignedBootEnabled ?? device.SignedBootEnabled)
+            ? t["Security.Policy3.ValueSigned"]
+            : t["Security.Policy3.ValueUnsigned"];
+        var antiRollbackEnabled = security?.AntiRollbackEnabled ?? device.AntiRollbackEnabled;
+        var antiRollbackVersion = security?.AntiRollbackVersion ?? device.AntiRollbackVersion;
+        var exposureValue = (security?.DebugHidEnabled ?? device.DebugHidEnabled)
+            ? t["Security.Policy4.ValueDebug"]
+            : t["Security.Policy4.ValueManaged"];
+        var exposureDetail = string.Join(" · ",
+        [
+            $"{t["Security.Label.Management"]}: {BoolLabel(device.ManagementAvailable, t)}",
+            $"{t["Security.Label.FidoHid"]}: {BoolLabel(device.FidoHidAvailable, t)}",
+            $"{t["Security.Label.CtapConfigured"]}: {BoolLabel(security?.CtapConfigured ?? device.CtapConfigured, t)}"
+        ]);
+        var flags0Value = bootFlags0?.Available == true ? bootFlags0.Raw : t["Security.Value.Unavailable"];
+        var flags0Detail = bootFlags0?.Available == true
+            ? string.Join(" · ",
+            [
+                $"{t["Security.Label.RollbackRequired"]}: {BoolLabel(bootFlags0.RollbackRequired, t)}",
+                $"{t["Security.Label.FlashBootDisabled"]}: {BoolLabel(bootFlags0.FlashBootDisabled, t)}",
+                $"{t["Security.Label.PicobootDisabled"]}: {BoolLabel(bootFlags0.PicobootDisabled, t)}"
+            ])
+            : t["Security.Value.Unavailable"];
+        var flags1Value = bootFlags1?.Available == true ? bootFlags1.Raw : t["Security.Value.Unavailable"];
+        var flags1Detail = bootFlags1?.Available == true
+            ? string.Join(" · ",
+            [
+                $"{t["Security.Label.KeyValidMask"]}: {bootFlags1.KeyValidMask}",
+                $"{t["Security.Label.KeyInvalidMask"]}: {bootFlags1.KeyInvalidMask}"
+            ])
+            : t["Security.Value.Unavailable"];
+
         return
         [
-            new PolicyItem(t["Security.Policy1.Title"], $"{device.UserPresenceSource} · {device.UserPresenceTapCount}", $"{device.UserPresenceGestureWindowMs} ms / {device.UserPresenceRequestTimeoutMs} ms"),
-            new PolicyItem(t["Security.Policy2.Title"], device.PinConfigured ? t["Security.Pin.Configured"] : t["Security.Pin.NotConfigured"], $"{t["Security.Pin.Retries"]}: {device.PinRetries}"),
-            new PolicyItem(t["Security.Policy3.Title"], device.SignedBootEnabled ? t["Security.Policy3.ValueSigned"] : t["Security.Policy3.ValueUnsigned"], device.AntiRollbackEnabled ? t["Security.Policy3.DetailRollbackOn"] : t["Security.Policy3.DetailRollbackOff"]),
-            new PolicyItem(t["Security.Policy4.Title"], device.DebugHidEnabled ? t["Security.Policy4.ValueDebug"] : t["Security.Policy4.ValueManaged"], device.ManagementAvailable ? t["Security.Policy4.DetailManaged"] : t["Security.Policy4.DetailUnavailable"])
+            new PolicyItem(t["Security.Policy1.Title"], upValue, upDetail),
+            new PolicyItem(t["Security.Policy2.Title"], pinValue, $"{t["Security.Pin.Retries"]}: {pinRetries}"),
+            new PolicyItem(t["Security.Policy3.Title"], bootValue, $"{t["Security.Label.Version"]}: {antiRollbackVersion} · {(antiRollbackEnabled ? t["Security.Policy3.DetailRollbackOn"] : t["Security.Policy3.DetailRollbackOff"])}"),
+            new PolicyItem(t["Security.Policy4.Title"], exposureValue, device.ManagementAvailable ? exposureDetail : t["Security.Policy4.DetailUnavailable"]),
+            new PolicyItem(t["Security.Policy5.Title"], flags0Value, flags0Detail),
+            new PolicyItem(t["Security.Policy6.Title"], flags1Value, flags1Detail)
         ];
+    }
+
+    private string BuildUserPresenceSummary(UserPresenceConfigInfo? config, string fallbackSource, int fallbackTapCount, LocalizationService t)
+    {
+        var source = config?.Source ?? fallbackSource;
+        var tapCount = config?.TapCount ?? fallbackTapCount;
+
+        return $"{source} · {tapCount}";
+    }
+
+    private string BuildUserPresenceDetail(UserPresenceConfigInfo? effective,
+                                          UserPresenceConfigInfo? persisted,
+                                          bool sessionOverride,
+                                          LocalizationService t)
+    {
+        var effectiveDetail = $"{t["Security.Label.Effective"]}: {BuildPresenceShape(effective, t)}";
+        var persistedDetail = $"{t["Security.Label.Persisted"]}: {BuildPresenceShape(persisted, t)}";
+        var overrideDetail = sessionOverride ? t["Security.Label.OverrideOn"] : t["Security.Label.OverrideOff"];
+
+        return string.Join(" · ", [effectiveDetail, persistedDetail, overrideDetail]);
+    }
+
+    private string BuildPresenceShape(UserPresenceConfigInfo? config, LocalizationService t)
+    {
+        if (config is null)
+        {
+            return t["Security.Value.Unavailable"];
+        }
+
+        return string.Join(" / ",
+        [
+            config.Source,
+            $"{config.GestureWindowMs} ms",
+            $"{config.RequestTimeoutMs} ms",
+            $"{t["Security.Label.Gpio"]} {config.GpioPin}"
+        ]);
+    }
+
+    private string BoolLabel(bool value, LocalizationService t)
+    {
+        return value ? t["Security.Value.Enabled"] : t["Security.Value.Disabled"];
     }
 
     private IReadOnlyList<InfoItem> BuildAboutItems(ConnectedDeviceInfo? device, string appVersion, LocalizationService t)

@@ -96,6 +96,22 @@ public sealed class CapabilityItem
     public string Detail { get; }
 }
 
+public sealed class CredentialCatalogItem
+{
+    public CredentialCatalogItem(string title, string subtitle, string detail, string footer)
+    {
+        Title = title;
+        Subtitle = subtitle;
+        Detail = detail;
+        Footer = footer;
+    }
+
+    public string Title { get; }
+    public string Subtitle { get; }
+    public string Detail { get; }
+    public string Footer { get; }
+}
+
 public sealed class PolicyItem
 {
     public PolicyItem(string title, string value, string detail)
@@ -168,6 +184,8 @@ public sealed class ManagerSnapshot
     public IReadOnlyList<DeviceEntry> Devices { get; init; } = Array.Empty<DeviceEntry>();
     public IReadOnlyList<PolicyItem> DevicePolicies { get; init; } = Array.Empty<PolicyItem>();
     public IReadOnlyList<CapabilityItem> CredentialCapabilities { get; init; } = Array.Empty<CapabilityItem>();
+    public IReadOnlyList<InfoItem> CredentialCatalogFacts { get; init; } = Array.Empty<InfoItem>();
+    public IReadOnlyList<CredentialCatalogItem> CredentialCatalog { get; init; } = Array.Empty<CredentialCatalogItem>();
     public IReadOnlyList<PolicyItem> SecurityPolicies { get; init; } = Array.Empty<PolicyItem>();
     public IReadOnlyList<MaintenanceCommand> MaintenanceCommands { get; init; } = Array.Empty<MaintenanceCommand>();
     public IReadOnlyList<InfoItem> AboutItems { get; init; } = Array.Empty<InfoItem>();

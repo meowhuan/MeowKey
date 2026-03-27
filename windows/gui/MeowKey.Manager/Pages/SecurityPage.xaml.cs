@@ -19,9 +19,11 @@ public sealed partial class SecurityPage : Page
 
     private ManagerRepository Repository => ((App)Application.Current).Repository;
 
-    private void OnPromoteSecureReady(object sender, RoutedEventArgs e)
+    private void OnRefreshSecurity(object sender, RoutedEventArgs e)
     {
-        Repository.RecordAction("Activity.Category.security", "Action.Security.PromoteSecureReady");
+        Repository.Refresh();
+        Repository.RecordAction("Activity.Category.security", "Action.Security.RefreshState");
+        Frame.Navigate(typeof(SecurityPage));
     }
 
     private void OnKeepDebugLimited(object sender, RoutedEventArgs e)
@@ -33,7 +35,7 @@ public sealed partial class SecurityPage : Page
     {
         PageTitleText.Text = _localizer["Page.Security.Title"];
         PageDescriptionText.Text = _localizer["Page.Security.Description"];
-        PromoteSecureReadyButton.Content = _localizer["Page.Security.Action.PromoteSecureReady"];
+        RefreshSecurityButton.Content = _localizer["Page.Security.Action.Refresh"];
         KeepDebugLimitedButton.Content = _localizer["Page.Security.Action.KeepDebugLimited"];
         RecommendationTitleText.Text = _localizer["Page.Security.RecommendationTitle"];
         RecommendationDescriptionText.Text = _localizer["Page.Security.RecommendationDescription"];

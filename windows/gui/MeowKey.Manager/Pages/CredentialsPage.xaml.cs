@@ -19,22 +19,26 @@ public sealed partial class CredentialsPage : Page
 
     private ManagerRepository Repository => ((App)Application.Current).Repository;
 
+    private void OnRefreshCatalog(object sender, RoutedEventArgs e)
+    {
+        Repository.Refresh();
+        Repository.RecordAction("Activity.Category.credentials", "Action.Credentials.RefreshCatalog");
+        Frame.Navigate(typeof(CredentialsPage));
+    }
+
     private void OnPlanSingleDelete(object sender, RoutedEventArgs e)
     {
         Repository.RecordAction("Activity.Category.credentials", "Action.Credentials.PlanDelete");
-    }
-
-    private void OnKeepSummaryPath(object sender, RoutedEventArgs e)
-    {
-        Repository.RecordAction("Activity.Category.credentials", "Action.Credentials.KeepSummary");
     }
 
     private void ApplyLocalization()
     {
         PageTitleText.Text = _localizer["Page.Credentials.Title"];
         PageDescriptionText.Text = _localizer["Page.Credentials.Description"];
+        RefreshCatalogButton.Content = _localizer["Page.Credentials.Action.Refresh"];
         PlanSingleDeleteButton.Content = _localizer["Page.Credentials.Action.PlanDelete"];
-        KeepSummaryPathButton.Content = _localizer["Page.Credentials.Action.KeepSummary"];
+        CatalogTitleText.Text = _localizer["Page.Credentials.CatalogTitle"];
+        CatalogDescriptionText.Text = _localizer["Page.Credentials.CatalogDescription"];
         CapabilityTitleText.Text = _localizer["Page.Credentials.CapabilityTitle"];
         EmptyStateTitleText.Text = _localizer["Page.Credentials.EmptyStateTitle"];
         EmptyStateDescriptionText.Text = _localizer["Page.Credentials.EmptyStateDescription"];
