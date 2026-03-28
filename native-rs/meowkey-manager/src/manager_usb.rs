@@ -238,6 +238,7 @@ mod ffi {
 
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
+    #[allow(non_snake_case)]
     pub struct libusb_device_descriptor {
         pub bLength: u8,
         pub bDescriptorType: u8,
