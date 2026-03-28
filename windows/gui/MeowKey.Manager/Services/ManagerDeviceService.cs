@@ -169,6 +169,11 @@ public sealed class ManagerDeviceService
         }
     }
 
+    public void RequestCredentialCatalogAuthorization(string devicePath)
+    {
+        _ = EnsureAuthorizationToken(devicePath, CredentialReadPermission);
+    }
+
     private static T? ReadJson<T>(string devicePath, byte command, ReadOnlySpan<byte> payload)
     {
         var json = WinUsbManagerTransport.SendCommand(devicePath, command, payload);
@@ -179,7 +184,7 @@ public sealed class ManagerDeviceService
     {
         var items = new List<CredentialSummaryInfo>();
         ushort cursor = 0;
-        byte[]? authorizationToken = null;
+        var authorizationToken = GetCachedAuthorizationToken(devicePath, CredentialReadPermission);
 
         try
         {
@@ -194,10 +199,8 @@ public sealed class ManagerDeviceService
                 }
                 catch (InvalidOperationException ex) when (ex.Message.Contains("status 0x04", StringComparison.OrdinalIgnoreCase))
                 {
-                    authorizationToken = EnsureAuthorizationToken(devicePath, CredentialReadPermission);
-                    payload = BuildCredentialCatalogPayload(cursor, CredentialPageLimit, authorizationToken);
-                    page = ReadJson<CredentialCatalogResponse>(devicePath, GetCredentialSummariesCommand, payload)
-                        ?? throw new InvalidOperationException("Credential catalog payload could not be parsed.");
+                    available = false;
+                    return Array.Empty<CredentialSummaryInfo>();
                 }
 
                 if (page.Items is not null)
@@ -224,6 +227,23 @@ public sealed class ManagerDeviceService
             available = false;
             return Array.Empty<CredentialSummaryInfo>();
         }
+    }
+
+    private byte[]? GetCachedAuthorizationToken(string devicePath, ushort permissions)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (!_authorizationCache.TryGetValue(devicePath, out var cached))
+        {
+            return null;
+        }
+
+        if (cached.ExpiresAt <= now || (cached.Permissions & permissions) != permissions)
+        {
+            _authorizationCache.Remove(devicePath);
+            return null;
+        }
+
+        return cached.Token;
     }
 
     private static SecurityStateInfo? TryReadSecurityState(string devicePath, out bool available)
@@ -294,15 +314,24 @@ public sealed class ManagerDeviceService
 
         var payload = new byte[sizeof(ushort)];
         BinaryPrimitives.WriteUInt16LittleEndian(payload, permissions);
-        var response = ReadJson<AuthorizationResponse>(devicePath, AuthorizeCommand, payload)
-            ?? throw new InvalidOperationException("Authorization response could not be parsed.");
+        AuthorizationResponse response;
+        try
+        {
+            response = ReadJson<AuthorizationResponse>(devicePath, AuthorizeCommand, payload)
+                ?? throw new InvalidOperationException("Authorization response could not be parsed.");
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("status 0x05", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Device confirmation timed out. Trigger authorization and finish local UP confirmation within the prompt window.", ex);
+        }
+
         if (!response.Authorized)
         {
             throw new InvalidOperationException("Device authorization was rejected.");
         }
 
         var token = ParseAuthToken(response.Token);
-        var ttlMs = response.TtlMs > 0 ? response.TtlMs : 30000;
+        var ttlMs = response.TtlMs > 0 ? response.TtlMs : 120000;
         var grantedPermissions = response.Permissions > 0 ? response.Permissions : permissions;
         if (grantedPermissions < 0 || grantedPermissions > ushort.MaxValue)
         {

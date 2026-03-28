@@ -1,0 +1,15 @@
+F:\MeowKey\tests\manager-attack-harness\bin\Debug\net10.0-windows\ManagerAttackHarness.exe
+F:\MeowKey\tests\manager-attack-harness\bin\Debug\net10.0-windows\ManagerAttackHarness.deps.json
+F:\MeowKey\tests\manager-attack-harness\bin\Debug\net10.0-windows\ManagerAttackHarness.runtimeconfig.json
+F:\MeowKey\tests\manager-attack-harness\bin\Debug\net10.0-windows\ManagerAttackHarness.dll
+F:\MeowKey\tests\manager-attack-harness\bin\Debug\net10.0-windows\ManagerAttackHarness.pdb
+F:\MeowKey\tests\manager-attack-harness\obj\Debug\net10.0-windows\ManagerAttackHarness.GeneratedMSBuildEditorConfig.editorconfig
+F:\MeowKey\tests\manager-attack-harness\obj\Debug\net10.0-windows\ManagerAttackHarness.AssemblyInfoInputs.cache
+F:\MeowKey\tests\manager-attack-harness\obj\Debug\net10.0-windows\ManagerAttackHarness.AssemblyInfo.cs
+F:\MeowKey\tests\manager-attack-harness\obj\Debug\net10.0-windows\ManagerAttackHarness.csproj.CoreCompileInputs.cache
+F:\MeowKey\tests\manager-attack-harness\obj\Debug\net10.0-windows\ManagerAttackHarness.sourcelink.json
+F:\MeowKey\tests\manager-attack-harness\obj\Debug\net10.0-windows\ManagerAttackHarness.dll
+F:\MeowKey\tests\manager-attack-harness\obj\Debug\net10.0-windows\refint\ManagerAttackHarness.dll
+F:\MeowKey\tests\manager-attack-harness\obj\Debug\net10.0-windows\ManagerAttackHarness.pdb
+F:\MeowKey\tests\manager-attack-harness\obj\Debug\net10.0-windows\ManagerAttackHarness.genruntimeconfig.cache
+F:\MeowKey\tests\manager-attack-harness\obj\Debug\net10.0-windows\ref\ManagerAttackHarness.dll

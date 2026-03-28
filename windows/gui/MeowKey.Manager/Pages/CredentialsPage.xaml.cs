@@ -48,6 +48,20 @@ public sealed partial class CredentialsPage : Page
         Frame.Navigate(typeof(CredentialsPage));
     }
 
+    private async void OnRequestAuthorization(object sender, RoutedEventArgs e)
+    {
+        if (Repository.RequestCredentialCatalogAuthorization(out var error))
+        {
+            Repository.RecordAction("Activity.Category.credentials", "Action.Credentials.RequestAuthorization");
+            Frame.Navigate(typeof(CredentialsPage));
+            return;
+        }
+
+        await ShowMessageAsync(
+            _localizer["Page.Credentials.Authorize.FailedTitle"],
+            string.IsNullOrWhiteSpace(error) ? _localizer["Page.Credentials.Authorize.FailedMessage"] : error!);
+    }
+
     private async void OnDeleteBySlot(object sender, RoutedEventArgs e)
     {
         var slotTextBox = new TextBox
@@ -269,6 +283,17 @@ public sealed partial class CredentialsPage : Page
 
         if (!selectedDevice.CredentialCatalogAvailable)
         {
+            if (selectedDevice.CredentialSummariesRequireAuth)
+            {
+                ShowGuidance(
+                    _localizer["Page.Credentials.Guidance.AuthorizationTitle"],
+                    _localizer["Page.Credentials.Guidance.AuthorizationDescription"],
+                    _localizer["Page.Credentials.Guidance.AuthorizationLine1"],
+                    _localizer["Page.Credentials.Guidance.AuthorizationLine2"],
+                    _localizer["Page.Credentials.Guidance.AuthorizationLine3"]);
+                return;
+            }
+
             ShowGuidance(
                 _localizer["Page.Credentials.Guidance.UnsupportedTitle"],
                 _localizer["Page.Credentials.Guidance.UnsupportedDescription"],
@@ -344,6 +369,7 @@ public sealed partial class CredentialsPage : Page
         PageTitleText.Text = _localizer["Page.Credentials.Title"];
         PageDescriptionText.Text = _localizer["Page.Credentials.Description"];
         AuthorizationCountdownText.Text = _localizer["Page.Credentials.AuthCountdown.Inactive"];
+        RequestAuthorizationButton.Content = _localizer["Page.Credentials.Action.RequestAuthorization"];
         RefreshCatalogButton.Content = _localizer["Page.Credentials.Action.Refresh"];
         DeleteBySlotButton.Content = _localizer["Page.Credentials.Action.DeleteBySlot"];
         CatalogTitleText.Text = _localizer["Page.Credentials.CatalogTitle"];

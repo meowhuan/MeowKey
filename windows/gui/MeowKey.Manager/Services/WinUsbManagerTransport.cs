@@ -20,6 +20,9 @@ internal static class WinUsbManagerTransport
     private const byte BulkOutPipeId = 0x03;
     private const byte BulkInPipeId = 0x83;
     private const uint PipeTransferTimeout = 0x03;
+    private const byte AuthorizeCommand = 0x05;
+    private const uint DefaultCommandTimeoutMs = 4000;
+    private const uint AuthorizeCommandTimeoutMs = 15000;
     private const int RequestHeaderSize = 10;
     private const int ResponseHeaderSize = 10;
     private const byte ProtocolVersion = 0x01;
@@ -81,8 +84,9 @@ internal static class WinUsbManagerTransport
 
         try
         {
-            SetPipeTimeout(winUsbHandle, BulkInPipeId, 2000);
-            SetPipeTimeout(winUsbHandle, BulkOutPipeId, 2000);
+            var timeoutMs = ResolveTimeoutMs(command);
+            SetPipeTimeout(winUsbHandle, BulkInPipeId, timeoutMs);
+            SetPipeTimeout(winUsbHandle, BulkOutPipeId, timeoutMs);
 
             var request = BuildRequest(command, payload);
             if (!WinUsb_WritePipe(winUsbHandle, BulkOutPipeId, request, (uint)request.Length, out var written, IntPtr.Zero) || written != (uint)request.Length)
@@ -102,6 +106,11 @@ internal static class WinUsbManagerTransport
     private static void SetPipeTimeout(IntPtr winUsbHandle, byte pipeId, uint timeoutMs)
     {
         _ = WinUsb_SetPipePolicy(winUsbHandle, pipeId, PipeTransferTimeout, sizeof(uint), ref timeoutMs);
+    }
+
+    private static uint ResolveTimeoutMs(byte command)
+    {
+        return command == AuthorizeCommand ? AuthorizeCommandTimeoutMs : DefaultCommandTimeoutMs;
     }
 
     private static byte[] BuildRequest(byte command, ReadOnlySpan<byte> payload)

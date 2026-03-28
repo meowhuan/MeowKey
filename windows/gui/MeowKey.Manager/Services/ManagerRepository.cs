@@ -92,6 +92,30 @@ public sealed class ManagerRepository
         }
     }
 
+    public bool RequestCredentialCatalogAuthorization(out string? error)
+    {
+        var device = ResolveSelectedDevice(_devices);
+        if (device is null || string.IsNullOrWhiteSpace(device.DevicePath))
+        {
+            error = _localizer["Page.Credentials.Error.NoDevice"];
+            return false;
+        }
+
+        try
+        {
+            _deviceService.RequestCredentialCatalogAuthorization(device.DevicePath);
+            Refresh();
+            error = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            ActivityEntries.Insert(0, new ActivityEntry(DateTime.Now, _localizer["Activity.Category.credentials"], ex.Message));
+            return false;
+        }
+    }
+
     public bool ApplyUserPresenceConfig(UserPresenceConfigInfo config, bool persisted, out string? error)
     {
         var device = ResolveSelectedDevice(_devices);
