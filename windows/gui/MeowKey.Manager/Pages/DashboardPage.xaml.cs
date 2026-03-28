@@ -41,19 +41,10 @@ public sealed partial class DashboardPage : Page
         ConfirmLinuxSurfaceButton.Content = _localizer["Page.Dashboard.Action.ViewDevices"];
         OverviewFactsTitleText.Text = _localizer["Page.Dashboard.FactsTitle"];
         OverviewFactsDescriptionText.Text = _localizer["Page.Dashboard.FactsDescription"];
-        ReadinessTitleText.Text = _localizer["Page.Dashboard.ReadinessTitle"];
-        ReadinessDescriptionText.Text = _localizer["Page.Dashboard.ReadinessDescription"];
-        PlatformTitleText.Text = _localizer["Page.Dashboard.PlatformTitle"];
-        PlatformDescriptionText.Text = _localizer["Page.Dashboard.PlatformDescription"];
         BoundaryTitleText.Text = _localizer["Page.Dashboard.BoundaryTitle"];
         BoundaryDescriptionText.Text = _localizer["Page.Dashboard.BoundaryDescription"];
-        NowTitleText.Text = _localizer["Page.Dashboard.NowTitle"];
-        NowLine1Text.Text = _localizer["Page.Dashboard.NowLine1"];
-        NowLine2Text.Text = _localizer["Page.Dashboard.NowLine2"];
-        NowLine3Text.Text = _localizer["Page.Dashboard.NowLine3"];
-        NextTitleText.Text = _localizer["Page.Dashboard.NextTitle"];
-        NextLine1Text.Text = _localizer["Page.Dashboard.NextLine1"];
-        NextLine2Text.Text = _localizer["Page.Dashboard.NextLine2"];
-        NextLine3Text.Text = _localizer["Page.Dashboard.NextLine3"];
+        PolicyLine1Text.Text = _localizer["Page.Dashboard.NowLine1"];
+        PolicyLine2Text.Text = _localizer["Page.Dashboard.NowLine2"];
+        PolicyLine3Text.Text = _localizer["Page.Dashboard.NowLine3"];
     }
 }

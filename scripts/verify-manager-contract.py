@@ -37,6 +37,13 @@ def main() -> int:
         / "Services"
         / "ManagerDeviceService.cs"
     ).read_text(encoding="utf-8")
+    rust_transport = (
+        repo_root
+        / "native-rs"
+        / "meowkey-manager"
+        / "src"
+        / "transport.rs"
+    ).read_text(encoding="utf-8")
     build_config_template = (repo_root / "src" / "meowkey_build_config.h.in").read_text(encoding="utf-8")
 
     failures: list[str] = []
@@ -121,6 +128,69 @@ def main() -> int:
     require_regex(manager_device, r"private const byte AuthorizeCommand = 0x05;", "manager device service missing authorize command id", failures)
     require_regex(manager_device, r"private const ushort CredentialReadPermission = 0x0004;", "manager device service missing read permission bit", failures)
     require_regex(manager_device, r"private const ushort CredentialWritePermission = 0x0001;", "manager device service missing write permission bit", failures)
+
+    require_regex(rust_transport, r"const MANAGER_CMD_AUTHORIZE: u8 = 0x05;", "Rust manager missing authorize command id", failures)
+    require_regex(rust_transport, r"const MANAGER_CMD_DELETE_CREDENTIAL: u8 = 0x06;", "Rust manager missing delete command id", failures)
+    require_regex(
+        rust_transport,
+        r"const MANAGER_CMD_SET_USER_PRESENCE_PERSISTED: u8 = 0x07;",
+        "Rust manager missing persisted user-presence command id",
+        failures,
+    )
+    require_regex(
+        rust_transport,
+        r"const MANAGER_CMD_SET_USER_PRESENCE_SESSION: u8 = 0x08;",
+        "Rust manager missing session user-presence command id",
+        failures,
+    )
+    require_regex(
+        rust_transport,
+        r"const MANAGER_CMD_CLEAR_USER_PRESENCE_SESSION: u8 = 0x09;",
+        "Rust manager missing clear-session user-presence command id",
+        failures,
+    )
+    require_regex(
+        rust_transport,
+        r"const MANAGER_PERMISSION_CREDENTIAL_READ: u16 = 0x0004;",
+        "Rust manager missing credential-read permission bit",
+        failures,
+    )
+    require_regex(
+        rust_transport,
+        r"const MANAGER_PERMISSION_CREDENTIAL_WRITE: u16 = 0x0001;",
+        "Rust manager missing credential-write permission bit",
+        failures,
+    )
+    require_regex(
+        rust_transport,
+        r"const MANAGER_PERMISSION_USER_PRESENCE_WRITE: u16 = 0x0002;",
+        "Rust manager missing user-presence-write permission bit",
+        failures,
+    )
+    require_substring(
+        rust_transport,
+        "fn request_formal_credential_catalog_authorization(",
+        "Rust manager missing formal authorization entry point",
+        failures,
+    )
+    require_substring(
+        rust_transport,
+        "fn delete_formal_credential_slot(",
+        "Rust manager missing formal delete entry point",
+        failures,
+    )
+    require_substring(
+        rust_transport,
+        "fn set_formal_user_presence(",
+        "Rust manager missing formal user-presence write entry point",
+        failures,
+    )
+    require_substring(
+        rust_transport,
+        "fn clear_formal_user_presence_session(",
+        "Rust manager missing formal user-presence clear entry point",
+        failures,
+    )
 
     require_substring(
         build_config_template,

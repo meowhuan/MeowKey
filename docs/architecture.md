@@ -182,7 +182,7 @@ WinUI manager:
 Rust manager shell:
 
 - keeps the Linux-facing desktop surface on `Rust + egui/eframe`
-- can now read the formal management channel for credential summaries and security posture
+- now supports formal-channel reads and formal write actions (`AUTHORIZE`, per-credential delete, user-presence persisted/session writes, and session clear)
 - still remains the practical maintenance and bring-up workbench for Debug HID flows
 - still covers diagnostics and registration / assertion tests
 
@@ -370,7 +370,7 @@ WinUI 管理器：
 Rust 管理器壳层：
 
 - 继续承担 Linux 侧 `Rust + egui/eframe` 桌面界面
-- 现在已经能读取正式管理通道里的凭据摘要和安全姿态
+- 现在已经支持正式通道读写（`AUTHORIZE`、单条凭据删除、user presence 持久/会话写入与会话清理）
 - 仍然是 Debug HID 维护与 bring-up 的实用工作台
 - 继续覆盖诊断、注册 / 断言测试等能力
 

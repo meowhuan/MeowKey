@@ -8,11 +8,11 @@ use serde::Serialize;
 
 use crate::models::{
     AssertionResult, CredentialRecord, InfoSnapshot, InitSnapshot, LogEntry, MakeCredentialResult,
-    RegisterForm, SessionSnapshot,
+    RegisterForm, SessionSnapshot, UserPresenceConfigSnapshot,
 };
 use crate::transport::{
-    DebugHidBackend, ManagerBackend, ManagerChannelBackend, PreviewBackend, default_assertion_form, default_log_body,
-    default_register_form,
+    DebugHidBackend, ManagerBackend, ManagerChannelBackend, PreviewBackend, default_assertion_form,
+    default_log_body, default_register_form,
 };
 
 const FONT_CANDIDATES: &[&str] = &[
@@ -34,10 +34,18 @@ pub struct MeowKeyManagerApp {
     diagnostic_output: String,
     manager_catalog_output: String,
     manager_security_output: String,
+    manager_write_output: String,
     init_output: String,
     info_output: String,
     make_credential_output: String,
     get_assertion_output: String,
+    manager_delete_slot: String,
+    manager_up_source: String,
+    manager_up_gpio_pin: i8,
+    manager_up_gpio_active_low: bool,
+    manager_up_tap_count: u8,
+    manager_up_gesture_window_ms: u16,
+    manager_up_request_timeout_ms: u16,
     credentials: Vec<CredentialRecord>,
     selected_credential: Option<usize>,
     logs: Vec<LogEntry>,
@@ -59,10 +67,18 @@ impl MeowKeyManagerApp {
             diagnostic_output: "还没有固件诊断日志。".to_string(),
             manager_catalog_output: "还没有正式凭据目录。".to_string(),
             manager_security_output: "还没有正式安全状态。".to_string(),
+            manager_write_output: "还没有正式管理写操作响应。".to_string(),
             init_output: "还没有初始化响应。".to_string(),
             info_output: "还没有认证器信息。".to_string(),
             make_credential_output: "还没有注册结果。".to_string(),
             get_assertion_output: "还没有断言结果。".to_string(),
+            manager_delete_slot: "0".to_string(),
+            manager_up_source: "bootsel".to_string(),
+            manager_up_gpio_pin: -1,
+            manager_up_gpio_active_low: true,
+            manager_up_tap_count: 2,
+            manager_up_gesture_window_ms: 750,
+            manager_up_request_timeout_ms: 8000,
             credentials: Vec::new(),
             selected_credential: None,
             logs: Vec::new(),
@@ -112,6 +128,7 @@ impl MeowKeyManagerApp {
         self.diagnostic_output = "还没有固件诊断日志。".to_string();
         self.manager_catalog_output = "还没有正式凭据目录。".to_string();
         self.manager_security_output = "还没有正式安全状态。".to_string();
+        self.manager_write_output = "还没有正式管理写操作响应。".to_string();
         self.init_output = "还没有初始化响应。".to_string();
         self.info_output = "还没有认证器信息。".to_string();
         self.make_credential_output = "还没有注册结果。".to_string();
@@ -362,6 +379,86 @@ impl MeowKeyManagerApp {
         }
     }
 
+    fn request_formal_catalog_authorization(&mut self) {
+        match self.collect_backend_logs(|backend, log| {
+            backend.request_formal_credential_catalog_authorization(log)
+        }) {
+            Ok(snapshot) => {
+                self.manager_write_output = to_pretty_json(&snapshot);
+                self.push_log("管理", "已请求正式目录读取授权。");
+            }
+            Err(error) => self.push_log("错误", &error.to_string()),
+        }
+    }
+
+    fn delete_formal_credential_slot(&mut self) {
+        let slot = match self.manager_delete_slot.trim().parse::<u16>() {
+            Ok(slot) => slot,
+            Err(_) => {
+                self.push_log("错误", "删除槽位必须是 0..65535 的整数。");
+                return;
+            }
+        };
+
+        match self
+            .collect_backend_logs(|backend, log| backend.delete_formal_credential_slot(slot, log))
+        {
+            Ok(snapshot) => {
+                self.manager_write_output = to_pretty_json(&snapshot);
+                self.push_log("管理", &format!("已执行正式凭据删除，slot={slot}。"));
+                self.refresh_formal_credential_catalog();
+            }
+            Err(error) => self.push_log("错误", &error.to_string()),
+        }
+    }
+
+    fn build_formal_up_config(&self) -> UserPresenceConfigSnapshot {
+        let source = self.manager_up_source.trim().to_lowercase();
+        UserPresenceConfigSnapshot {
+            enabled: source != "none",
+            source,
+            gpio_pin: self.manager_up_gpio_pin,
+            gpio_active_low: self.manager_up_gpio_active_low,
+            tap_count: self.manager_up_tap_count,
+            gesture_window_ms: self.manager_up_gesture_window_ms,
+            request_timeout_ms: self.manager_up_request_timeout_ms,
+        }
+    }
+
+    fn set_formal_user_presence(&mut self, persisted: bool) {
+        let config = self.build_formal_up_config();
+        match self.collect_backend_logs(|backend, log| {
+            backend.set_formal_user_presence(&config, persisted, log)
+        }) {
+            Ok(snapshot) => {
+                self.manager_write_output = to_pretty_json(&snapshot);
+                self.push_log(
+                    "管理",
+                    if persisted {
+                        "已写入正式 user-presence 持久配置。"
+                    } else {
+                        "已写入正式 user-presence 会话配置。"
+                    },
+                );
+                self.refresh_formal_security_state();
+            }
+            Err(error) => self.push_log("错误", &error.to_string()),
+        }
+    }
+
+    fn clear_formal_user_presence_session(&mut self) {
+        match self
+            .collect_backend_logs(|backend, log| backend.clear_formal_user_presence_session(log))
+        {
+            Ok(snapshot) => {
+                self.manager_write_output = to_pretty_json(&snapshot);
+                self.push_log("管理", "已清除正式 user-presence 会话覆盖。");
+                self.refresh_formal_security_state();
+            }
+            Err(error) => self.push_log("错误", &error.to_string()),
+        }
+    }
+
     fn render_title_bar(&self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.add_space(8.0);
@@ -443,6 +540,67 @@ impl MeowKeyManagerApp {
                         secondary_button(ui, "清空凭据")
                             .clicked()
                             .then(|| self.clear_credentials());
+                    });
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("正式管理写操作").size(13.0).strong());
+                    ui.label(
+                        RichText::new("Rust 侧对齐 WinUI：授权、单条删除、UP 写入。")
+                            .size(11.0)
+                            .color(muted_text()),
+                    );
+                    ui.add_space(6.0);
+                    ui.horizontal_wrapped(|ui| {
+                        secondary_button(ui, "目录鉴权")
+                            .clicked()
+                            .then(|| self.request_formal_catalog_authorization());
+                        secondary_button(ui, "删除槽位")
+                            .clicked()
+                            .then(|| self.delete_formal_credential_slot());
+                        secondary_button(ui, "写入UP(持久)")
+                            .clicked()
+                            .then(|| self.set_formal_user_presence(true));
+                        secondary_button(ui, "写入UP(会话)")
+                            .clicked()
+                            .then(|| self.set_formal_user_presence(false));
+                        secondary_button(ui, "清理会话UP")
+                            .clicked()
+                            .then(|| self.clear_formal_user_presence_session());
+                    });
+                    ui.add_space(6.0);
+                    form_label(ui, "删除 slot");
+                    ui.add(
+                        TextEdit::singleline(&mut self.manager_delete_slot)
+                            .desired_width(100.0)
+                            .hint_text("0..65535"),
+                    );
+                    form_label(ui, "UP source");
+                    ui.add(
+                        TextEdit::singleline(&mut self.manager_up_source)
+                            .desired_width(120.0)
+                            .hint_text("none / bootsel / gpio"),
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new("GPIO").size(12.0).color(muted_text()));
+                        ui.add(egui::DragValue::new(&mut self.manager_up_gpio_pin).range(-1..=47));
+                        ui.checkbox(&mut self.manager_up_gpio_active_low, "ActiveLow");
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new("Tap").size(12.0).color(muted_text()));
+                        ui.add(egui::DragValue::new(&mut self.manager_up_tap_count).range(1..=4));
+                        ui.label(RichText::new("WindowMs").size(12.0).color(muted_text()));
+                        ui.add(
+                            egui::DragValue::new(&mut self.manager_up_gesture_window_ms)
+                                .range(100..=5000),
+                        );
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new("TimeoutMs").size(12.0).color(muted_text()));
+                        ui.add(
+                            egui::DragValue::new(&mut self.manager_up_request_timeout_ms)
+                                .range(500..=30000),
+                        );
                     });
                 });
 
@@ -542,6 +700,14 @@ impl MeowKeyManagerApp {
                             .unwrap_or("空闲"),
                     );
                 });
+            });
+
+            ui.add_space(12.0);
+
+            card(ui, |ui| {
+                card_header(ui, "正式写操作响应", "授权、删除、UP 写入命令的最近一次返回。");
+                copy_toolbar(ui, ctx, "正式写操作响应", &self.manager_write_output);
+                output_panel(ui, "manager-write-output", &self.manager_write_output, 180.0);
             });
 
             ui.add_space(12.0);

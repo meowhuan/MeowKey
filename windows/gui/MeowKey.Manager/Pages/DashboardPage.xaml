@@ -34,77 +34,20 @@
                 </Grid>
             </Border>
 
-            <Grid ColumnSpacing="12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-
-                <Border Grid.Column="0" Style="{StaticResource SectionCardStyle}">
-                    <StackPanel Spacing="12">
-                        <TextBlock x:Name="OverviewFactsTitleText" FontSize="18" FontWeight="SemiBold" />
-                        <TextBlock x:Name="OverviewFactsDescriptionText"
-                                   Foreground="{ThemeResource AppMutedForegroundBrush}"
-                                   TextWrapping="WrapWholeWords" />
-                        <ItemsControl ItemsSource="{x:Bind Snapshot.OverviewFacts}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="models:InfoItem">
-                                    <Border Style="{StaticResource SurfaceCardStyle}" Margin="0,0,0,8">
-                                        <StackPanel Spacing="6">
-                                            <TextBlock Text="{x:Bind Label}"
-                                                       Foreground="{ThemeResource AppMutedForegroundBrush}" />
-                                            <TextBlock Text="{x:Bind Value}" FontWeight="SemiBold" />
-                                            <TextBlock Text="{x:Bind Detail}"
-                                                       Foreground="{ThemeResource AppMutedForegroundBrush}"
-                                                       TextWrapping="WrapWholeWords" />
-                                        </StackPanel>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
-                </Border>
-
-                <Border Grid.Column="1" Style="{StaticResource SectionCardStyle}">
-                    <StackPanel Spacing="12">
-                        <TextBlock x:Name="ReadinessTitleText" FontSize="18" FontWeight="SemiBold" />
-                        <TextBlock x:Name="ReadinessDescriptionText"
-                                   Foreground="{ThemeResource AppMutedForegroundBrush}"
-                                   TextWrapping="WrapWholeWords" />
-                        <ItemsControl ItemsSource="{x:Bind Snapshot.DashboardReadiness}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="models:ReadinessItem">
-                                    <Border Style="{StaticResource SurfaceCardStyle}" Margin="0,0,0,8">
-                                        <StackPanel Spacing="6">
-                                            <TextBlock Text="{x:Bind Status}"
-                                                       Foreground="{ThemeResource AppMutedForegroundBrush}" />
-                                            <TextBlock Text="{x:Bind Title}" FontWeight="SemiBold" />
-                                            <TextBlock Text="{x:Bind Detail}"
-                                                       Foreground="{ThemeResource AppMutedForegroundBrush}"
-                                                       TextWrapping="WrapWholeWords" />
-                                        </StackPanel>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
-                </Border>
-            </Grid>
-
             <Border Style="{StaticResource SectionCardStyle}">
                 <StackPanel Spacing="12">
-                    <TextBlock x:Name="PlatformTitleText" FontSize="18" FontWeight="SemiBold" />
-                    <TextBlock x:Name="PlatformDescriptionText"
+                    <TextBlock x:Name="OverviewFactsTitleText" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock x:Name="OverviewFactsDescriptionText"
                                Foreground="{ThemeResource AppMutedForegroundBrush}"
                                TextWrapping="WrapWholeWords" />
-                    <ItemsControl ItemsSource="{x:Bind Snapshot.PlatformChoices}">
+                    <ItemsControl ItemsSource="{x:Bind Snapshot.OverviewFacts}">
                         <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="models:PlatformChoice">
+                            <DataTemplate x:DataType="models:InfoItem">
                                 <Border Style="{StaticResource SurfaceCardStyle}" Margin="0,0,0,8">
                                     <StackPanel Spacing="6">
-                                        <TextBlock Text="{x:Bind Platform}"
+                                        <TextBlock Text="{x:Bind Label}"
                                                    Foreground="{ThemeResource AppMutedForegroundBrush}" />
-                                        <TextBlock Text="{x:Bind Toolkit}" FontWeight="SemiBold" />
+                                        <TextBlock Text="{x:Bind Value}" FontWeight="SemiBold" />
                                         <TextBlock Text="{x:Bind Detail}"
                                                    Foreground="{ThemeResource AppMutedForegroundBrush}"
                                                    TextWrapping="WrapWholeWords" />
@@ -122,31 +65,13 @@
                     <TextBlock x:Name="BoundaryDescriptionText"
                                Foreground="{ThemeResource AppMutedForegroundBrush}"
                                TextWrapping="WrapWholeWords" />
-
-                    <Grid ColumnSpacing="12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-
-                        <Border Grid.Column="0" Style="{StaticResource SurfaceCardStyle}">
-                            <StackPanel Spacing="6">
-                                <TextBlock x:Name="NowTitleText" FontWeight="SemiBold" />
-                                <TextBlock x:Name="NowLine1Text" />
-                                <TextBlock x:Name="NowLine2Text" />
-                                <TextBlock x:Name="NowLine3Text" />
-                            </StackPanel>
-                        </Border>
-
-                        <Border Grid.Column="1" Style="{StaticResource SurfaceCardStyle}">
-                            <StackPanel Spacing="6">
-                                <TextBlock x:Name="NextTitleText" FontWeight="SemiBold" />
-                                <TextBlock x:Name="NextLine1Text" />
-                                <TextBlock x:Name="NextLine2Text" />
-                                <TextBlock x:Name="NextLine3Text" />
-                            </StackPanel>
-                        </Border>
-                    </Grid>
+                    <Border Style="{StaticResource SurfaceCardStyle}">
+                        <StackPanel Spacing="6">
+                            <TextBlock x:Name="PolicyLine1Text" />
+                            <TextBlock x:Name="PolicyLine2Text" />
+                            <TextBlock x:Name="PolicyLine3Text" />
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
             </Border>
         </StackPanel>

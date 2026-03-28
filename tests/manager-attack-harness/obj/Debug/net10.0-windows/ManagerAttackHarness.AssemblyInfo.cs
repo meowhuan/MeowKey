@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("ManagerAttackHarness")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+ab2045867a6919bb6fea6f882db2d62ba07d609c")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+ea2bc910524a72db847f43a34a385c6b8b4f64f2")]
 [assembly: System.Reflection.AssemblyProductAttribute("ManagerAttackHarness")]
 [assembly: System.Reflection.AssemblyTitleAttribute("ManagerAttackHarness")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

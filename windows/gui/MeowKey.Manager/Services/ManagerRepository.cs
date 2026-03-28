@@ -13,13 +13,7 @@ public sealed class ManagerRepository
 
     public ManagerRepository()
     {
-        ActivityEntries = new ObservableCollection<ActivityEntry>
-        {
-            CreateActivityEntry(DateTime.Now.AddMinutes(-18), "Activity.Category.shell", "Activity.Startup.Shell"),
-            CreateActivityEntry(DateTime.Now.AddMinutes(-14), "Activity.Category.platform", "Activity.Startup.PlatformWin"),
-            CreateActivityEntry(DateTime.Now.AddMinutes(-11), "Activity.Category.platform", "Activity.Startup.PlatformLinux"),
-            CreateActivityEntry(DateTime.Now.AddMinutes(-8), "Activity.Category.cleanup", "Activity.Startup.Cleanup")
-        };
+        ActivityEntries = new ObservableCollection<ActivityEntry>();
 
         Refresh();
     }
@@ -205,19 +199,6 @@ public sealed class ManagerRepository
             SelectedDevice = currentDevice,
             HeaderSummaries = headerSummaries,
             OverviewFacts = overviewFacts,
-            DashboardReadiness =
-            [
-                new ReadinessItem(t["Dashboard.Readiness.Now"], t["Dashboard.Readiness.Item1.Title"], t["Dashboard.Readiness.Item1.Detail"]),
-                new ReadinessItem(t["Dashboard.Readiness.Now"], t["Dashboard.Readiness.Item2.Title"], t["Dashboard.Readiness.Item2.Detail"]),
-                new ReadinessItem(t["Dashboard.Readiness.Next"], t["Dashboard.Readiness.Item3.Title"], t["Dashboard.Readiness.Item3.Detail"]),
-                new ReadinessItem(t["Dashboard.Readiness.Next"], t["Dashboard.Readiness.Item4.Title"], t["Dashboard.Readiness.Item4.Detail"])
-            ],
-            PlatformChoices =
-            [
-                new PlatformChoice(t["Dashboard.Platform.Windows"], t["Dashboard.Platform.Windows.Toolkit"], t["Dashboard.Platform.Windows.Detail"]),
-                new PlatformChoice(t["Dashboard.Platform.Linux"], t["Dashboard.Platform.Linux.Toolkit"], t["Dashboard.Platform.Linux.Detail"]),
-                new PlatformChoice(t["Dashboard.Platform.Shared"], t["Dashboard.Platform.Shared.Toolkit"], t["Dashboard.Platform.Shared.Detail"])
-            ],
             Devices = deviceEntries,
             DevicePolicies =
             [
@@ -232,10 +213,11 @@ public sealed class ManagerRepository
             UserPresenceSections = userPresenceSections,
             MaintenanceCommands =
             [
+                new MaintenanceCommand(t["Maintenance.Command.Check.Label"], "powershell -ExecutionPolicy Bypass -File .\\scripts\\check.ps1", t["Maintenance.Command.Check.Detail"]),
+                new MaintenanceCommand(t["Maintenance.Command.Hardened.Label"], "powershell -ExecutionPolicy Bypass -File .\\scripts\\build.ps1 -BuildDir build-hardened -NoPicotool -IgnoreGitGlobalConfig -DisableDebugHid", t["Maintenance.Command.Hardened.Detail"]),
                 new MaintenanceCommand(t["Debug.Command.InstallDriver.Label"], "powershell -ExecutionPolicy Bypass -File .\\windows\\driver\\manager-winusb\\install-manager-driver.ps1", t["Debug.Command.InstallDriver.Detail"]),
                 new MaintenanceCommand(t["Debug.Command.RunManager.Label"], "powershell -ExecutionPolicy Bypass -File .\\scripts\\run-manager.ps1 -Configuration Release", t["Debug.Command.RunManager.Detail"]),
-                new MaintenanceCommand(t["Debug.Command.BuildDebug.Label"], "powershell -ExecutionPolicy Bypass -File .\\scripts\\build.ps1 -BuildDir build -NoPicotool -IgnoreGitGlobalConfig", t["Debug.Command.BuildDebug.Detail"]),
-                new MaintenanceCommand(t["Debug.Command.Probe.Label"], "powershell -ExecutionPolicy Bypass -File .\\scripts\\probe-board.ps1", t["Debug.Command.Probe.Detail"])
+                new MaintenanceCommand(t["Maintenance.Command.Probe.Label"], "powershell -ExecutionPolicy Bypass -File .\\scripts\\probe-board.ps1", t["Maintenance.Command.Probe.Detail"])
             ],
             AboutItems = aboutItems
         };

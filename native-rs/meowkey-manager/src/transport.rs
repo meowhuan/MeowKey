@@ -50,6 +50,18 @@ const MANAGER_HEADER_SIZE: usize = 10;
 const MANAGER_CMD_GET_SNAPSHOT: u8 = 0x01;
 const MANAGER_CMD_GET_CREDENTIAL_SUMMARIES: u8 = 0x03;
 const MANAGER_CMD_GET_SECURITY_STATE: u8 = 0x04;
+const MANAGER_CMD_AUTHORIZE: u8 = 0x05;
+const MANAGER_CMD_DELETE_CREDENTIAL: u8 = 0x06;
+const MANAGER_CMD_SET_USER_PRESENCE_PERSISTED: u8 = 0x07;
+const MANAGER_CMD_SET_USER_PRESENCE_SESSION: u8 = 0x08;
+const MANAGER_CMD_CLEAR_USER_PRESENCE_SESSION: u8 = 0x09;
+const MANAGER_STATUS_AUTH_REQUIRED: u8 = 0x04;
+const MANAGER_STATUS_CONFIRMATION_REQUIRED: u8 = 0x05;
+const MANAGER_AUTH_TOKEN_BYTES: usize = 16;
+const MANAGER_AUTH_DEFAULT_TTL_MS: u64 = 120_000;
+const MANAGER_PERMISSION_CREDENTIAL_WRITE: u16 = 0x0001;
+const MANAGER_PERMISSION_USER_PRESENCE_WRITE: u16 = 0x0002;
+const MANAGER_PERMISSION_CREDENTIAL_READ: u16 = 0x0004;
 
 const CTAP2_STATUS_OK: u8 = 0x00;
 const CTAP2_ERR_INVALID_CBOR: u8 = 0x12;
@@ -65,6 +77,31 @@ const CTAP2_ERR_NOT_ALLOWED: u8 = 0x30;
 const CTAP2_ERR_PIN_TOKEN_EXPIRED: u8 = 0x38;
 
 type Logger<'a> = &'a mut dyn FnMut(&str, &str);
+
+#[derive(Clone)]
+struct ManagerAuthorizationState {
+    token: [u8; MANAGER_AUTH_TOKEN_BYTES],
+    permissions: u16,
+    expires_at_unix_ms: u128,
+}
+
+#[derive(Debug)]
+struct ManagerStatusError {
+    command: u8,
+    status: u8,
+}
+
+impl std::fmt::Display for ManagerStatusError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "正式管理命令失败，command=0x{:02x}，status=0x{:02x}",
+            self.command, self.status
+        )
+    }
+}
+
+impl std::error::Error for ManagerStatusError {}
 
 pub trait ManagerBackend {
     fn backend_name(&self) -> &'static str;
@@ -97,6 +134,30 @@ pub trait ManagerBackend {
 
     fn get_formal_security_state(&mut self, _log: Logger<'_>) -> Result<Value> {
         bail!("当前后端不支持正式管理安全状态。")
+    }
+
+    fn request_formal_credential_catalog_authorization(
+        &mut self,
+        _log: Logger<'_>,
+    ) -> Result<Value> {
+        bail!("当前后端不支持正式管理授权。")
+    }
+
+    fn delete_formal_credential_slot(&mut self, _slot: u16, _log: Logger<'_>) -> Result<Value> {
+        bail!("当前后端不支持正式管理凭据删除。")
+    }
+
+    fn set_formal_user_presence(
+        &mut self,
+        _config: &UserPresenceConfigSnapshot,
+        _persisted: bool,
+        _log: Logger<'_>,
+    ) -> Result<Value> {
+        bail!("当前后端不支持正式管理 user-presence 写入。")
+    }
+
+    fn clear_formal_user_presence_session(&mut self, _log: Logger<'_>) -> Result<Value> {
+        bail!("当前后端不支持正式管理 user-presence 会话清理。")
     }
 
     #[allow(dead_code)]
@@ -552,9 +613,144 @@ pub struct DebugHidBackend {
     product_id: u16,
 }
 
-#[derive(Default)]
 pub struct ManagerChannelBackend {
     device: Option<ManagerUsbDevice>,
+    authorization: Option<ManagerAuthorizationState>,
+    debug_hid_enabled: bool,
+}
+
+impl Default for ManagerChannelBackend {
+    fn default() -> Self {
+        Self {
+            device: None,
+            authorization: None,
+            debug_hid_enabled: false,
+        }
+    }
+}
+
+impl ManagerChannelBackend {
+    fn require_device(&self) -> Result<&ManagerUsbDevice> {
+        self.device
+            .as_ref()
+            .ok_or_else(|| anyhow!("请先连接正式管理通道。"))
+    }
+
+    fn resolve_cached_authorization(
+        &mut self,
+        permissions: u16,
+    ) -> Option<[u8; MANAGER_AUTH_TOKEN_BYTES]> {
+        let now = unix_time_ms();
+        let cached = self.authorization.as_ref()?;
+        if cached.expires_at_unix_ms <= now || (cached.permissions & permissions) != permissions {
+            self.authorization = None;
+            return None;
+        }
+        Some(cached.token)
+    }
+
+    fn ensure_write_policy(&self) -> Result<()> {
+        if self.debug_hid_enabled {
+            bail!("设备当前暴露 Debug HID，正式写操作仅允许在 hardened 形态执行。");
+        }
+        Ok(())
+    }
+
+    fn ensure_authorization(
+        &mut self,
+        permissions: u16,
+        log: Logger<'_>,
+    ) -> Result<[u8; MANAGER_AUTH_TOKEN_BYTES]> {
+        if let Some(token) = self.resolve_cached_authorization(permissions) {
+            return Ok(token);
+        }
+
+        let payload = permissions.to_le_bytes();
+        let device = self.require_device()?;
+        let response = match send_manager_command_json(device, MANAGER_CMD_AUTHORIZE, &payload, log)
+        {
+            Ok(response) => response,
+            Err(error)
+                if manager_status_code(&error) == Some(MANAGER_STATUS_CONFIRMATION_REQUIRED) =>
+            {
+                bail!("设备本地确认超时。请触发授权并在确认窗口内完成本地 UP。");
+            }
+            Err(error) => return Err(error),
+        };
+
+        let authorized = response
+            .get("authorized")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !authorized {
+            bail!("设备拒绝了正式管理授权。");
+        }
+
+        let granted_permissions = response
+            .get("permissions")
+            .and_then(Value::as_u64)
+            .map(|value| u16::try_from(value).context("授权权限位超出范围"))
+            .transpose()?
+            .unwrap_or(permissions);
+        let ttl_ms = response
+            .get("ttlMs")
+            .and_then(Value::as_u64)
+            .unwrap_or(MANAGER_AUTH_DEFAULT_TTL_MS);
+        let token_hex = response
+            .get("token")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("授权响应缺少 token 字段。"))?;
+        let token_vec = hex_to_bytes(token_hex)?;
+        if token_vec.len() != MANAGER_AUTH_TOKEN_BYTES {
+            bail!("授权 token 长度非法: {}", token_vec.len());
+        }
+        let token: [u8; MANAGER_AUTH_TOKEN_BYTES] = token_vec
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow!("授权 token 载荷长度不匹配。"))?;
+
+        self.authorization = Some(ManagerAuthorizationState {
+            token,
+            permissions: granted_permissions,
+            expires_at_unix_ms: unix_time_ms().saturating_add(u128::from(ttl_ms)),
+        });
+
+        Ok(token)
+    }
+
+    fn build_credential_page_payload(&mut self, cursor: u16, limit: u16) -> Vec<u8> {
+        if let Some(token) = self.resolve_cached_authorization(MANAGER_PERMISSION_CREDENTIAL_READ) {
+            let mut payload = Vec::with_capacity(MANAGER_AUTH_TOKEN_BYTES + 4);
+            payload.extend_from_slice(&token);
+            payload.extend_from_slice(&cursor.to_le_bytes());
+            payload.extend_from_slice(&limit.to_le_bytes());
+            return payload;
+        }
+
+        let mut payload = Vec::with_capacity(4);
+        payload.extend_from_slice(&cursor.to_le_bytes());
+        payload.extend_from_slice(&limit.to_le_bytes());
+        payload
+    }
+
+    fn build_authorization_snapshot(&self) -> Value {
+        let now = unix_time_ms();
+        if let Some(cached) = &self.authorization {
+            if cached.expires_at_unix_ms > now {
+                return json!({
+                    "authorized": true,
+                    "permissions": cached.permissions,
+                    "expiresAtUnixMs": cached.expires_at_unix_ms
+                });
+            }
+        }
+
+        json!({
+            "authorized": false,
+            "permissions": 0,
+            "expiresAtUnixMs": 0
+        })
+    }
 }
 
 impl ManagerBackend for ManagerChannelBackend {
@@ -576,15 +772,20 @@ impl ManagerBackend for ManagerChannelBackend {
             .unwrap_or("manager-bulk-v1")
             .to_string();
         let usb = format_usb_identity(&snapshot);
+        let debug_hid_enabled = snapshot
+            .get("build")
+            .and_then(|build| build.get("debugHidEnabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
         log(
             "管理",
-            &format!(
-                "已连接正式管理接口\n设备: {device_name}\nUSB: {usb}\ntransport: {transport}"
-            ),
+            &format!("已连接正式管理接口\n设备: {device_name}\nUSB: {usb}\ntransport: {transport}"),
         );
 
         self.device = Some(device);
+        self.authorization = None;
+        self.debug_hid_enabled = debug_hid_enabled;
         Ok(SessionSnapshot {
             backend_name: self.backend_name().to_string(),
             device_name,
@@ -594,6 +795,10 @@ impl ManagerBackend for ManagerChannelBackend {
                 "formal-management".to_string(),
                 "0x03 credential summaries".to_string(),
                 "0x04 security state".to_string(),
+                "0x05 authorize".to_string(),
+                "0x06 delete credential".to_string(),
+                "0x07/0x08 set user presence".to_string(),
+                "0x09 clear user presence session".to_string(),
             ],
             state_label: "管理通道已连接".to_string(),
         })
@@ -601,27 +806,40 @@ impl ManagerBackend for ManagerChannelBackend {
 
     fn disconnect(&mut self) -> Result<()> {
         self.device = None;
+        self.authorization = None;
+        self.debug_hid_enabled = false;
         Ok(())
     }
 
     fn get_formal_credential_catalog(&mut self, log: Logger<'_>) -> Result<Value> {
-        let device = self
-            .device
-            .as_ref()
-            .ok_or_else(|| anyhow!("请先连接正式管理通道。"))?;
-
         let mut cursor = 0u16;
         let limit = 16u16;
         let mut pages = 0u32;
         let mut collected = Vec::new();
 
         loop {
-            let page = send_manager_command_json(
+            let payload = self.build_credential_page_payload(cursor, limit);
+            let device = self.require_device()?;
+            let page = match send_manager_command_json(
                 device,
                 MANAGER_CMD_GET_CREDENTIAL_SUMMARIES,
-                &build_credential_page_payload(cursor, limit),
+                &payload,
                 log,
-            )?;
+            ) {
+                Ok(page) => page,
+                Err(error) if manager_status_code(&error) == Some(MANAGER_STATUS_AUTH_REQUIRED) => {
+                    self.ensure_authorization(MANAGER_PERMISSION_CREDENTIAL_READ, log)?;
+                    let retry_payload = self.build_credential_page_payload(cursor, limit);
+                    let retry_device = self.require_device()?;
+                    send_manager_command_json(
+                        retry_device,
+                        MANAGER_CMD_GET_CREDENTIAL_SUMMARIES,
+                        &retry_payload,
+                        log,
+                    )?
+                }
+                Err(error) => return Err(error),
+            };
             pages += 1;
 
             if let Some(items) = page.get("items").and_then(Value::as_array) {
@@ -657,11 +875,64 @@ impl ManagerBackend for ManagerChannelBackend {
     }
 
     fn get_formal_security_state(&mut self, log: Logger<'_>) -> Result<Value> {
-        let device = self
-            .device
-            .as_ref()
-            .ok_or_else(|| anyhow!("请先连接正式管理通道。"))?;
+        let device = self.require_device()?;
         send_manager_command_json(device, MANAGER_CMD_GET_SECURITY_STATE, &[], log)
+    }
+
+    fn request_formal_credential_catalog_authorization(
+        &mut self,
+        log: Logger<'_>,
+    ) -> Result<Value> {
+        self.ensure_authorization(MANAGER_PERMISSION_CREDENTIAL_READ, log)?;
+        Ok(self.build_authorization_snapshot())
+    }
+
+    fn delete_formal_credential_slot(&mut self, slot: u16, log: Logger<'_>) -> Result<Value> {
+        self.ensure_write_policy()?;
+        let token = self.ensure_authorization(MANAGER_PERMISSION_CREDENTIAL_WRITE, log)?;
+        let mut payload = Vec::with_capacity(MANAGER_AUTH_TOKEN_BYTES + 2);
+        payload.extend_from_slice(&token);
+        payload.extend_from_slice(&slot.to_le_bytes());
+        let device = self.require_device()?;
+        send_manager_command_json(device, MANAGER_CMD_DELETE_CREDENTIAL, &payload, log)
+    }
+
+    fn set_formal_user_presence(
+        &mut self,
+        config: &UserPresenceConfigSnapshot,
+        persisted: bool,
+        log: Logger<'_>,
+    ) -> Result<Value> {
+        self.ensure_write_policy()?;
+        let normalized = normalize_user_presence_config(config)?;
+        let token = self.ensure_authorization(MANAGER_PERMISSION_USER_PRESENCE_WRITE, log)?;
+        let command = if persisted {
+            MANAGER_CMD_SET_USER_PRESENCE_PERSISTED
+        } else {
+            MANAGER_CMD_SET_USER_PRESENCE_SESSION
+        };
+        let mut payload = Vec::with_capacity(MANAGER_AUTH_TOKEN_BYTES + 8);
+        payload.extend_from_slice(&token);
+        payload.push(match normalized.source.as_str() {
+            "none" => 0u8,
+            "bootsel" => 1u8,
+            "gpio" => 2u8,
+            other => bail!("不支持的 UP source: {other}"),
+        });
+        payload.push(normalized.gpio_pin as u8);
+        payload.push(u8::from(normalized.gpio_active_low));
+        payload.push(normalized.tap_count);
+        payload.extend_from_slice(&normalized.gesture_window_ms.to_le_bytes());
+        payload.extend_from_slice(&normalized.request_timeout_ms.to_le_bytes());
+        let device = self.require_device()?;
+        send_manager_command_json(device, command, &payload, log)
+    }
+
+    fn clear_formal_user_presence_session(&mut self, log: Logger<'_>) -> Result<Value> {
+        self.ensure_write_policy()?;
+        let token = self.ensure_authorization(MANAGER_PERMISSION_USER_PRESENCE_WRITE, log)?;
+        let device = self.require_device()?;
+        send_manager_command_json(device, MANAGER_CMD_CLEAR_USER_PRESENCE_SESSION, &token, log)
     }
 
     fn init_channel(
@@ -1318,8 +1589,9 @@ fn pick_debug_candidate(api: &HidApi) -> Result<DeviceCandidate> {
     let mut candidates = Vec::new();
 
     for info in api.device_list() {
-        if info.vendor_id() != DEFAULT_VENDOR_ID ||
-           !(info.product_id() == DEFAULT_PRODUCT_ID || info.product_id() == LEGACY_PRODUCT_ID) {
+        if info.vendor_id() != DEFAULT_VENDOR_ID
+            || !(info.product_id() == DEFAULT_PRODUCT_ID || info.product_id() == LEGACY_PRODUCT_ID)
+        {
             continue;
         }
 
@@ -1584,7 +1856,10 @@ fn send_manager_command(
 ) -> Result<Vec<u8>> {
     log(
         "管理",
-        &format!("发送正式管理命令 0x{command:02x}，payload={} byte(s)", payload.len()),
+        &format!(
+            "发送正式管理命令 0x{command:02x}，payload={} byte(s)",
+            payload.len()
+        ),
     );
 
     let request = build_manager_request(command, payload);
@@ -1593,7 +1868,10 @@ fn send_manager_command(
 
     log(
         "管理",
-        &format!("收到正式管理命令 0x{command:02x} 响应，payload={} byte(s)", payload.len()),
+        &format!(
+            "收到正式管理命令 0x{command:02x} 响应，payload={} byte(s)",
+            payload.len()
+        ),
     );
     Ok(payload)
 }
@@ -1622,7 +1900,10 @@ fn parse_manager_response(response: &[u8], command: u8) -> Result<Vec<u8>> {
         bail!("正式管理响应命令不匹配: 0x{:02x}", response[6]);
     }
     if response[5] != 0 {
-        bail!("正式管理命令失败，状态码=0x{:02x}", response[5]);
+        return Err(anyhow!(ManagerStatusError {
+            command,
+            status: response[5],
+        }));
     }
 
     let payload_length = u16::from_le_bytes([response[8], response[9]]) as usize;
@@ -1633,11 +1914,17 @@ fn parse_manager_response(response: &[u8], command: u8) -> Result<Vec<u8>> {
     Ok(response[MANAGER_HEADER_SIZE..(MANAGER_HEADER_SIZE + payload_length)].to_vec())
 }
 
-fn build_credential_page_payload(cursor: u16, limit: u16) -> [u8; 4] {
-    let mut payload = [0u8; 4];
-    payload[..2].copy_from_slice(&cursor.to_le_bytes());
-    payload[2..].copy_from_slice(&limit.to_le_bytes());
-    payload
+fn manager_status_code(error: &anyhow::Error) -> Option<u8> {
+    error
+        .downcast_ref::<ManagerStatusError>()
+        .map(|status| status.status)
+}
+
+fn unix_time_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0)
 }
 
 fn format_usb_identity(snapshot: &Value) -> String {

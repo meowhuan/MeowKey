@@ -29,7 +29,10 @@ impl ManagerUsbDevice {
     #[cfg(target_os = "linux")]
     pub fn open() -> Result<Self> {
         let mut context = ptr::null_mut();
-        check_libusb(unsafe { ffi::libusb_init(&mut context) }, "初始化 libusb 失败")?;
+        check_libusb(
+            unsafe { ffi::libusb_init(&mut context) },
+            "初始化 libusb 失败",
+        )?;
 
         let mut device_list = ptr::null_mut();
         let count = unsafe { ffi::libusb_get_device_list(context, &mut device_list) };
@@ -52,7 +55,9 @@ impl ManagerUsbDevice {
                 continue;
             }
 
-            if descriptor.idVendor != DEFAULT_VENDOR_ID || descriptor.idProduct != DEFAULT_PRODUCT_ID {
+            if descriptor.idVendor != DEFAULT_VENDOR_ID
+                || descriptor.idProduct != DEFAULT_PRODUCT_ID
+            {
                 continue;
             }
 
@@ -266,8 +271,10 @@ mod ffi {
             handle: *mut *mut libusb_device_handle,
         ) -> c_int;
         pub fn libusb_close(handle: *mut libusb_device_handle);
-        pub fn libusb_claim_interface(handle: *mut libusb_device_handle, interface_number: c_int)
-            -> c_int;
+        pub fn libusb_claim_interface(
+            handle: *mut libusb_device_handle,
+            interface_number: c_int,
+        ) -> c_int;
         pub fn libusb_release_interface(
             handle: *mut libusb_device_handle,
             interface_number: c_int,

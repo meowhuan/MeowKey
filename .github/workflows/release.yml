@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  firmware:
     runs-on: ubuntu-24.04
     environment:
       name: release
@@ -97,16 +97,147 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: meowkey-${{ env.RELEASE_TAG }}
-          path: |
-            dist/*.zip
-            dist/SHA256SUMS.txt
+          name: firmware-release-zips
+          path: dist/*.zip
+
+  manager-winui:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish WinUI manager
+        shell: powershell
+        run: |
+          $tag = "${env:GITHUB_REF_NAME}"
+          $version = if ($tag.StartsWith("v")) { $tag.Substring(1) } else { $tag }
+          $distDir = Join-Path $PWD "dist"
+          $publishDir = Join-Path $env:RUNNER_TEMP "meowkey-manager-winui-publish"
+          $packageDir = Join-Path $env:RUNNER_TEMP "meowkey-$tag-manager-winui"
+          $zipPath = Join-Path $distDir "meowkey-$tag-manager-winui.zip"
+
+          dotnet publish windows/gui/MeowKey.Manager/MeowKey.Manager.csproj `
+            -c Release `
+            -p:ContinuousIntegrationBuild=true `
+            -p:Version=$version `
+            -o $publishDir
+
+          if (Test-Path $packageDir) {
+            Remove-Item -Recurse -Force $packageDir
+          }
+          New-Item -ItemType Directory -Path $packageDir | Out-Null
+          Copy-Item -Path "$publishDir\*" -Destination $packageDir -Recurse -Force
+          Copy-Item -Path "windows/gui/MeowKey.Manager/README.md" -Destination $packageDir -Force
+
+          if (Test-Path $zipPath) {
+            Remove-Item -Force $zipPath
+          }
+          New-Item -ItemType Directory -Path $distDir -Force | Out-Null
+          Compress-Archive -Path $packageDir -DestinationPath $zipPath -CompressionLevel Optimal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manager-winui-zip
+          path: dist/*.zip
+
+  manager-rust-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust manager build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libx11-dev \
+            libxi-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libegl1-mesa-dev \
+            libgl1-mesa-dev \
+            zip
+
+      - name: Build Rust Linux manager
+        run: cargo build --release --locked --manifest-path native-rs/meowkey-manager/Cargo.toml
+
+      - name: Package Rust Linux manager
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          PACKAGE_BASENAME="meowkey-${TAG}-manager-rust-linux"
+          PACKAGE_DIR="${RUNNER_TEMP}/${PACKAGE_BASENAME}"
+          DIST_DIR="${GITHUB_WORKSPACE}/dist"
+          ZIP_PATH="${DIST_DIR}/${PACKAGE_BASENAME}.zip"
+          rm -rf "${PACKAGE_DIR}"
+          mkdir -p "${PACKAGE_DIR}"
+          mkdir -p "${DIST_DIR}"
+          cp target/release/meowkey-manager "${PACKAGE_DIR}/"
+          cp native-rs/meowkey-manager/README.md "${PACKAGE_DIR}/"
+          chmod +x "${PACKAGE_DIR}/meowkey-manager"
+          (
+            cd "${RUNNER_TEMP}"
+            zip -r "${PACKAGE_BASENAME}.zip" "${PACKAGE_BASENAME}"
+          )
+          mv "${RUNNER_TEMP}/${PACKAGE_BASENAME}.zip" "${ZIP_PATH}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manager-rust-linux-zip
+          path: dist/*.zip
+
+  publish:
+    runs-on: ubuntu-24.04
+    needs:
+      - firmware
+      - manager-winui
+      - manager-rust-linux
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-release-zips
+          path: release-dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: manager-winui-zip
+          path: release-dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: manager-rust-linux-zip
+          path: release-dist
+
+      - name: Build release checksum manifest
+        run: |
+          cd release-dist
+          find . -maxdepth 1 -type f -name '*.zip' -print0 \
+            | sort -z \
+            | xargs -0 sha256sum \
+            | sed 's#  \./#  #' > SHA256SUMS.txt
+
+      - name: Resolve prerelease flag
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            echo "MEOWKEY_RELEASE_IS_PRERELEASE=true" >> "$GITHUB_ENV"
+          else
+            echo "MEOWKEY_RELEASE_IS_PRERELEASE=false" >> "$GITHUB_ENV"
+          fi
 
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.RELEASE_TAG }}
+          tag_name: ${{ github.ref_name }}
           generate_release_notes: true
           prerelease: ${{ env.MEOWKEY_RELEASE_IS_PRERELEASE == 'true' }}
           files: |
-            dist/*.zip
-            dist/SHA256SUMS.txt
+            release-dist/*.zip
+            release-dist/SHA256SUMS.txt

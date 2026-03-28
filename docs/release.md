@@ -49,6 +49,8 @@ Current package families:
 - `preset-<label>-hardened`
 - `preset-<label>-hardened-secure-boot-ready`
 - `probe-board-id`
+- `manager-winui`
+- `manager-rust-linux`
 
 The secure-boot-ready variants appear only when the workflow runs inside the GitHub Actions Environment `release` and that environment has access to the signing key secret.
 
@@ -93,6 +95,16 @@ Probe archives include:
 - `manifest.json`
 - `flash.ps1`
 - `flash.sh`
+
+Manager WinUI archives include:
+
+- published WinUI desktop binaries (`win-x64`)
+- `README.md`
+
+Manager Rust-Linux archives include:
+
+- `meowkey-manager` Linux binary
+- `README.md`
 
 Checksums are collected in:
 
@@ -194,6 +206,8 @@ Windows 上的桌面工具检查：
 - `preset-<label>-hardened`
 - `preset-<label>-hardened-secure-boot-ready`
 - `probe-board-id`
+- `manager-winui`
+- `manager-rust-linux`
 
 其中 secure-boot-ready 变体只有在 workflow 运行于 GitHub Actions Environment `release`，并且该环境能够读取签名密钥 secret 时才会生成。
 
@@ -238,6 +252,16 @@ probe 压缩包包含：
 - `manifest.json`
 - `flash.ps1`
 - `flash.sh`
+
+WinUI 管理器压缩包包含：
+
+- 发布后的 WinUI 桌面二进制（`win-x64`）
+- `README.md`
+
+Rust-Linux 管理器压缩包包含：
+
+- `meowkey-manager` Linux 可执行文件
+- `README.md`
 
 统一校验清单放在：
 

@@ -16,34 +16,6 @@ public sealed class SummaryCard
     public string Detail { get; }
 }
 
-public sealed class ReadinessItem
-{
-    public ReadinessItem(string status, string title, string detail)
-    {
-        Status = status;
-        Title = title;
-        Detail = detail;
-    }
-
-    public string Status { get; }
-    public string Title { get; }
-    public string Detail { get; }
-}
-
-public sealed class PlatformChoice
-{
-    public PlatformChoice(string platform, string toolkit, string detail)
-    {
-        Platform = platform;
-        Toolkit = toolkit;
-        Detail = detail;
-    }
-
-    public string Platform { get; }
-    public string Toolkit { get; }
-    public string Detail { get; }
-}
-
 public sealed class DeviceEntry
 {
     public DeviceEntry(
@@ -250,8 +222,6 @@ public sealed class ManagerSnapshot
     public ConnectedDeviceInfo? SelectedDevice { get; init; }
     public IReadOnlyList<SummaryCard> HeaderSummaries { get; init; } = Array.Empty<SummaryCard>();
     public IReadOnlyList<InfoItem> OverviewFacts { get; init; } = Array.Empty<InfoItem>();
-    public IReadOnlyList<ReadinessItem> DashboardReadiness { get; init; } = Array.Empty<ReadinessItem>();
-    public IReadOnlyList<PlatformChoice> PlatformChoices { get; init; } = Array.Empty<PlatformChoice>();
     public IReadOnlyList<DeviceEntry> Devices { get; init; } = Array.Empty<DeviceEntry>();
     public IReadOnlyList<PolicyItem> DevicePolicies { get; init; } = Array.Empty<PolicyItem>();
     public IReadOnlyList<CapabilityItem> CredentialCapabilities { get; init; } = Array.Empty<CapabilityItem>();

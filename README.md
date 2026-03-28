@@ -114,7 +114,7 @@ cd .\native-rs\meowkey-manager
 cargo run
 ```
 
-The browser UI still depends on Debug HID. The Rust shell can now read the formal management channel for inventory and posture, but its CTAP bring-up, diagnostics, and destructive maintenance flows still depend on Debug HID. The WinUI shell is now the primary Windows manager surface, and it can execute per-credential delete plus user-presence writes on the formal channel with local-UP-gated short-lived authorization.
+The browser UI still depends on Debug HID. The Rust shell and the WinUI shell now both support formal-channel reads plus formal write actions (per-credential delete and user-presence writes) behind local-UP-gated short-lived authorization. CTAP bring-up and diagnostics still depend on Debug HID.
 
 ### Probe and Presets
 
@@ -307,7 +307,7 @@ cd .\native-rs\meowkey-manager
 cargo run
 ```
 
-浏览器调试台仍然依赖 Debug HID。Rust 壳层现在已经能读取正式管理通道里的 inventory / posture 数据，但它的 CTAP bring-up、诊断和破坏性维护动作仍然依赖 Debug HID。WinUI 壳层现在是 Windows 主管理界面，并且已经能在正式管理通道上执行单条凭据删除与 user presence 写入（带本地在场确认和短时授权）。
+浏览器调试台仍然依赖 Debug HID。Rust 壳层和 WinUI 壳层现在都支持“正式通道读取 + 正式通道受控写入”（单条凭据删除与 user presence 写入），并且都走本地在场确认 + 短时授权。CTAP bring-up 与诊断仍然依赖 Debug HID。
 
 ### Probe 与预设
 

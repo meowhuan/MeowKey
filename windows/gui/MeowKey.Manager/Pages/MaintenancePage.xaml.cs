@@ -25,13 +25,13 @@ public sealed partial class MaintenancePage : Page
     private void OnPrepareReleaseCheck(object sender, RoutedEventArgs e)
     {
         Repository.Refresh();
-        Repository.RecordAction("Activity.Category.debug", "Action.Debug.RefreshChannel");
+        Repository.RecordAction("Activity.Category.maintenance", "Action.Maintenance.PrepareRelease");
         Frame.Navigate(typeof(MaintenancePage));
     }
 
     private void OnLogProbeReminder(object sender, RoutedEventArgs e)
     {
-        Repository.RecordAction("Activity.Category.debug", "Action.Debug.LogNote");
+        Repository.RecordAction("Activity.Category.maintenance", "Action.Maintenance.ProbeReminder");
     }
 
     private void ApplyLocalization()
