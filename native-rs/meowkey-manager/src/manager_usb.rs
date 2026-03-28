@@ -1,4 +1,6 @@
 use anyhow::{Result, anyhow};
+#[cfg(target_os = "linux")]
+use anyhow::bail;
 
 #[cfg(target_os = "linux")]
 use std::ptr;
