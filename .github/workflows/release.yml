@@ -186,7 +186,7 @@ jobs:
           rm -rf "${PACKAGE_DIR}"
           mkdir -p "${PACKAGE_DIR}"
           mkdir -p "${DIST_DIR}"
-          cp target/release/meowkey-manager "${PACKAGE_DIR}/"
+          cp native-rs/meowkey-manager/target/release/meowkey-manager "${PACKAGE_DIR}/"
           cp native-rs/meowkey-manager/README.md "${PACKAGE_DIR}/"
           chmod +x "${PACKAGE_DIR}/meowkey-manager"
           (
