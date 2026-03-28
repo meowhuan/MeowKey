@@ -2,6 +2,7 @@ mod app;
 mod cbor;
 mod manager_usb;
 mod models;
+mod release_updates;
 mod transport;
 
 use eframe::egui;

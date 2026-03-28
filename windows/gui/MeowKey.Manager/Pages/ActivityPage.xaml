@@ -53,6 +53,97 @@
                     </ItemsControl>
                 </StackPanel>
             </Border>
+
+            <Border Style="{StaticResource SectionCardStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock x:Name="UpdateTitleText" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock x:Name="UpdateDescriptionText"
+                               Foreground="{ThemeResource AppMutedForegroundBrush}"
+                               TextWrapping="WrapWholeWords" />
+
+                    <TextBlock x:Name="ManifestUrlLabelText"
+                               Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="ManifestUrlTextBox"
+                                 Grid.Column="0"
+                                 MinWidth="420" />
+                        <Button x:Name="SaveManifestUrlButton"
+                                Grid.Column="1"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Click="OnSaveManifestUrl" />
+                        <Button x:Name="CheckUpdatesButton"
+                                Grid.Column="2"
+                                Click="OnCheckUpdates" />
+                    </Grid>
+
+                    <StackPanel Orientation="Horizontal" Spacing="18">
+                        <ToggleSwitch x:Name="AppPreviewToggle"
+                                      Toggled="OnAppPreviewToggled" />
+                        <ToggleSwitch x:Name="FirmwarePreviewToggle"
+                                      Toggled="OnFirmwarePreviewToggled" />
+                    </StackPanel>
+
+                    <TextBlock x:Name="LastCheckedText"
+                               Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                    <TextBlock x:Name="ManifestSourceText"
+                               Foreground="{ThemeResource AppMutedForegroundBrush}"
+                               TextWrapping="WrapWholeWords" />
+
+                    <Grid ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0" Style="{StaticResource SurfaceCardStyle}">
+                            <StackPanel Spacing="6">
+                                <TextBlock x:Name="ManagerUpdateTitleText" FontWeight="SemiBold" />
+                                <TextBlock x:Name="ManagerUpdateStateText" />
+                                <TextBlock x:Name="ManagerUpdateCurrentText"
+                                           Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                                <TextBlock x:Name="ManagerUpdateLatestText"
+                                           Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button x:Name="OpenManagerDownloadButton"
+                                            Style="{StaticResource SecondaryButtonStyle}"
+                                            Click="OnOpenManagerDownload"
+                                            IsEnabled="False" />
+                                    <Button x:Name="OpenManagerNotesButton"
+                                            Style="{StaticResource SecondaryButtonStyle}"
+                                            Click="OnOpenManagerNotes"
+                                            IsEnabled="False" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="1" Style="{StaticResource SurfaceCardStyle}">
+                            <StackPanel Spacing="6">
+                                <TextBlock x:Name="FirmwareUpdateTitleText" FontWeight="SemiBold" />
+                                <TextBlock x:Name="FirmwareUpdateStateText" />
+                                <TextBlock x:Name="FirmwareUpdateCurrentText"
+                                           Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                                <TextBlock x:Name="FirmwareUpdateLatestText"
+                                           Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button x:Name="OpenFirmwareDownloadButton"
+                                            Style="{StaticResource SecondaryButtonStyle}"
+                                            Click="OnOpenFirmwareDownload"
+                                            IsEnabled="False" />
+                                    <Button x:Name="OpenFirmwareNotesButton"
+                                            Style="{StaticResource SecondaryButtonStyle}"
+                                            Click="OnOpenFirmwareNotes"
+                                            IsEnabled="False" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </StackPanel>
+            </Border>
         </StackPanel>
     </ScrollViewer>
 </Page>

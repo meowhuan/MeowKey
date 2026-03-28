@@ -9,6 +9,7 @@ This directory contains the primary Windows desktop manager shell for MeowKey.
 - Localization: `zh-CN / en-US`, with automatic selection from the system UI language and Chinese as the fallback
 - Formal management channel: `WinUSB` on `USB\\VID_CAFE&PID_4005&MI_01`
 - Formal write actions (no Debug HID dependency): per-credential delete, user-presence persisted/session writes, and session-override clear
+- About page release checks: manager/firmware update detection with separate `stable` / `preview` enrollment toggles
 - Primary sections:
   - `Overview`
   - `Devices`
@@ -38,6 +39,7 @@ Linux direction:
 - 布局方向：参考 `Android-Cam-Bridge` 的桌面管理器节奏
 - 本地化：支持 `zh-CN / en-US`，默认跟随系统 `UI language` 自动选择，未匹配时回落到中文
 - 正式管理通道：`USB\\VID_CAFE&PID_4005&MI_01` 上的 `WinUSB`
+- 关于页支持版本检查：可分别加入管理器与固件的 `stable` / `preview` 计划
 - 主分区：
   - `Overview`
   - `Devices`

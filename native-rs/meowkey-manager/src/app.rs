@@ -5,10 +5,15 @@ use std::{
 
 use eframe::egui::{self, Color32, RichText, ScrollArea, TextEdit};
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::models::{
     AssertionResult, CredentialRecord, InfoSnapshot, InitSnapshot, LogEntry, MakeCredentialResult,
     RegisterForm, SessionSnapshot, UserPresenceConfigSnapshot,
+};
+use crate::release_updates::{
+    DEFAULT_RELEASES_URL, UpdateCheckRequest, UpdatePreferences, UpdateState, check_updates,
+    load_update_preferences, normalize_track, save_update_preferences,
 };
 use crate::transport::{
     DebugHidBackend, ManagerBackend, ManagerChannelBackend, PreviewBackend, default_assertion_form,
@@ -18,9 +23,26 @@ use crate::transport::{
 const FONT_CANDIDATES: &[&str] = &[
     r"C:\Windows\Fonts\msyh.ttc",
     r"C:\Windows\Fonts\msyhbd.ttc",
+    r"C:\Windows\Fonts\segoeui.ttf",
+    r"C:\Windows\Fonts\seguiemj.ttf",
     r"C:\Windows\Fonts\simhei.ttf",
     r"C:\Windows\Fonts\simsun.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJKSC-Regular.otf",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 ];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ManagerSection {
+    Overview,
+    Devices,
+    Credentials,
+    Security,
+    Maintenance,
+    About,
+}
 
 pub struct MeowKeyManagerApp {
     backend: Box<dyn ManagerBackend>,
@@ -31,10 +53,29 @@ pub struct MeowKeyManagerApp {
     info_snapshot: Option<InfoSnapshot>,
     last_make_credential: Option<MakeCredentialResult>,
     last_assertion: Option<AssertionResult>,
+    manager_security_snapshot: Option<Value>,
     diagnostic_output: String,
     manager_catalog_output: String,
     manager_security_output: String,
     manager_write_output: String,
+    update_preferences: UpdatePreferences,
+    update_source_url: String,
+    update_app_preview: bool,
+    update_firmware_preview: bool,
+    update_last_checked_text: String,
+    update_source_text: String,
+    update_manager_state_text: String,
+    update_manager_current_text: String,
+    update_manager_latest_text: String,
+    update_manager_download_url: String,
+    update_manager_notes_url: String,
+    update_firmware_state_text: String,
+    update_firmware_current_text: String,
+    update_firmware_latest_text: String,
+    update_firmware_download_url: String,
+    update_firmware_notes_url: String,
+    update_result_output: String,
+    active_section: ManagerSection,
     init_output: String,
     info_output: String,
     make_credential_output: String,
@@ -54,6 +95,11 @@ pub struct MeowKeyManagerApp {
 impl MeowKeyManagerApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         install_cjk_fonts(&cc.egui_ctx);
+        let update_preferences = load_update_preferences();
+        let update_app_preview =
+            normalize_track(update_preferences.app_track.as_str()).eq("preview");
+        let update_firmware_preview =
+            normalize_track(update_preferences.firmware_track.as_str()).eq("preview");
 
         let mut app = Self {
             backend: Box::<PreviewBackend>::default(),
@@ -64,10 +110,29 @@ impl MeowKeyManagerApp {
             info_snapshot: None,
             last_make_credential: None,
             last_assertion: None,
+            manager_security_snapshot: None,
             diagnostic_output: "还没有固件诊断日志。".to_string(),
             manager_catalog_output: "还没有正式凭据目录。".to_string(),
             manager_security_output: "还没有正式安全状态。".to_string(),
             manager_write_output: "还没有正式管理写操作响应。".to_string(),
+            update_source_url: update_preferences.releases_url.clone(),
+            update_preferences,
+            update_app_preview,
+            update_firmware_preview,
+            update_last_checked_text: "尚未检查更新。".to_string(),
+            update_source_text: String::new(),
+            update_manager_state_text: "状态：未知".to_string(),
+            update_manager_current_text: format!("当前版本：{}", app_version_label()),
+            update_manager_latest_text: "目标版本：-".to_string(),
+            update_manager_download_url: String::new(),
+            update_manager_notes_url: String::new(),
+            update_firmware_state_text: "状态：未知".to_string(),
+            update_firmware_current_text: "当前版本：未连接设备".to_string(),
+            update_firmware_latest_text: "目标版本：-".to_string(),
+            update_firmware_download_url: String::new(),
+            update_firmware_notes_url: String::new(),
+            update_result_output: "还没有更新检查结果。".to_string(),
+            active_section: ManagerSection::Overview,
             init_output: "还没有初始化响应。".to_string(),
             info_output: "还没有认证器信息。".to_string(),
             make_credential_output: "还没有注册结果。".to_string(),
@@ -83,6 +148,7 @@ impl MeowKeyManagerApp {
             selected_credential: None,
             logs: Vec::new(),
         };
+        app.update_source_text = format!("来源发行页：{}", app.update_source_url);
         app.push_log("就绪", &default_log_body());
         app
     }
@@ -125,10 +191,12 @@ impl MeowKeyManagerApp {
         self.info_snapshot = None;
         self.last_make_credential = None;
         self.last_assertion = None;
+        self.manager_security_snapshot = None;
         self.diagnostic_output = "还没有固件诊断日志。".to_string();
         self.manager_catalog_output = "还没有正式凭据目录。".to_string();
         self.manager_security_output = "还没有正式安全状态。".to_string();
         self.manager_write_output = "还没有正式管理写操作响应。".to_string();
+        self.update_firmware_current_text = "当前版本：未连接设备".to_string();
         self.init_output = "还没有初始化响应。".to_string();
         self.info_output = "还没有认证器信息。".to_string();
         self.make_credential_output = "还没有注册结果。".to_string();
@@ -372,7 +440,15 @@ impl MeowKeyManagerApp {
     fn refresh_formal_security_state(&mut self) {
         match self.collect_backend_logs(|backend, log| backend.get_formal_security_state(log)) {
             Ok(snapshot) => {
+                self.manager_security_snapshot = Some(snapshot.clone());
                 self.manager_security_output = to_pretty_json(&snapshot);
+                if let Some(version) = snapshot
+                    .get("build")
+                    .and_then(|build| build.get("version"))
+                    .and_then(Value::as_str)
+                {
+                    self.update_firmware_current_text = format!("当前版本：{version}");
+                }
                 self.push_log("管理", "已读取正式管理安全状态。");
             }
             Err(error) => self.push_log("错误", &error.to_string()),
@@ -459,19 +535,203 @@ impl MeowKeyManagerApp {
         }
     }
 
+    fn sync_update_preferences_from_ui(&mut self) {
+        let mut preferences = self.update_preferences.clone();
+        preferences.releases_url = if self.update_source_url.trim().is_empty() {
+            DEFAULT_RELEASES_URL.to_string()
+        } else {
+            self.update_source_url.trim().to_string()
+        };
+        preferences.app_track = if self.update_app_preview {
+            "preview".to_string()
+        } else {
+            "stable".to_string()
+        };
+        preferences.firmware_track = if self.update_firmware_preview {
+            "preview".to_string()
+        } else {
+            "stable".to_string()
+        };
+        self.update_preferences = preferences;
+        self.update_source_url = self.update_preferences.releases_url.clone();
+        self.update_source_text = format!("来源发行页：{}", self.update_preferences.releases_url);
+    }
+
+    fn persist_update_preferences(&mut self) {
+        self.sync_update_preferences_from_ui();
+        if let Err(error) = save_update_preferences(&self.update_preferences) {
+            self.push_log("错误", &format!("保存更新偏好失败: {error}"));
+        }
+    }
+
+    fn open_update_url(&mut self, url: &str) {
+        if url.trim().is_empty() {
+            return;
+        }
+        if let Err(error) = webbrowser::open(url) {
+            self.push_log("错误", &format!("打开链接失败: {error}"));
+        }
+    }
+
+    fn current_firmware_version_for_updates(&self) -> Option<String> {
+        self.manager_security_snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.get("build"))
+            .and_then(|build| build.get("version"))
+            .and_then(Value::as_str)
+            .map(|value| value.to_string())
+    }
+
+    fn check_release_updates(&mut self) {
+        self.persist_update_preferences();
+        let request = UpdateCheckRequest {
+            releases_url: self.update_preferences.releases_url.clone(),
+            app_track: self.update_preferences.app_track.clone(),
+            firmware_track: self.update_preferences.firmware_track.clone(),
+            current_app_version: app_version_label().to_string(),
+            current_firmware_version: self.current_firmware_version_for_updates(),
+        };
+
+        match check_updates(&request) {
+            Ok(result) => {
+                self.update_result_output = to_pretty_json(&result);
+                self.update_last_checked_text =
+                    format!("最近检查：{}", format_unix_ms(result.checked_at_unix_ms));
+                self.update_source_text = format!("来源发行页：{}", result.releases_url);
+                self.apply_update_target(true, &result.manager_winui);
+                self.apply_update_target(false, &result.firmware);
+                self.push_log("更新", "已完成管理器与固件版本检查。");
+            }
+            Err(error) => {
+                self.update_manager_state_text = format!("状态：检查失败 ({error})");
+                self.update_firmware_state_text = format!("状态：检查失败 ({error})");
+                self.push_log("错误", &format!("检查更新失败: {error}"));
+            }
+        }
+    }
+
+    fn apply_update_target(
+        &mut self,
+        manager: bool,
+        target: &crate::release_updates::UpdateTargetResult,
+    ) {
+        let state = match target.state {
+            UpdateState::UpToDate => "状态：已是最新",
+            UpdateState::UpdateAvailable => "状态：发现新版本",
+            UpdateState::NotConfigured => "状态：发行版中未找到对应资产",
+            UpdateState::NoDevice => "状态：未连接设备",
+            UpdateState::Unknown => "状态：未知",
+        };
+        let latest = if target.latest_version.trim().is_empty() {
+            "-"
+        } else {
+            target.latest_version.as_str()
+        };
+
+        if manager {
+            self.update_manager_state_text = state.to_string();
+            self.update_manager_current_text = format!(
+                "当前版本：{}",
+                if target.current_version.trim().is_empty() {
+                    app_version_label()
+                } else {
+                    target.current_version.as_str()
+                }
+            );
+            self.update_manager_latest_text = format!("目标版本：{latest}");
+            self.update_manager_download_url = target.download_url.clone();
+            self.update_manager_notes_url = target.notes_url.clone();
+            return;
+        }
+
+        self.update_firmware_state_text = state.to_string();
+        self.update_firmware_current_text = format!(
+            "当前版本：{}",
+            if target.current_version.trim().is_empty() {
+                "未连接设备"
+            } else {
+                target.current_version.as_str()
+            }
+        );
+        self.update_firmware_latest_text = format!("目标版本：{latest}");
+        self.update_firmware_download_url = target.download_url.clone();
+        self.update_firmware_notes_url = target.notes_url.clone();
+    }
+
+    fn active_section_title(&self) -> (&'static str, &'static str) {
+        match self.active_section {
+            ManagerSection::Overview => ("概览", "设备摘要与当前状态"),
+            ManagerSection::Devices => ("设备", "连接、会话和基础枚举信息"),
+            ManagerSection::Credentials => ("凭据", "正式目录、注册/断言与缓存视图"),
+            ManagerSection::Security => ("安全", "正式安全状态与受控写操作"),
+            ManagerSection::Maintenance => ("维护", "诊断、日志和调试轨迹"),
+            ManagerSection::About => ("关于", "发行版更新检查与版本信息"),
+        }
+    }
+
+    fn render_section_nav(&mut self, ui: &mut egui::Ui) {
+        card(ui, |ui| {
+            card_header(
+                ui,
+                "分区导航",
+                "Overview / Devices / Credentials / Security / Maintenance / About",
+            );
+            self.section_nav_button(ui, ManagerSection::Overview, "Overview");
+            self.section_nav_button(ui, ManagerSection::Devices, "Devices");
+            self.section_nav_button(ui, ManagerSection::Credentials, "Credentials");
+            self.section_nav_button(ui, ManagerSection::Security, "Security");
+            self.section_nav_button(ui, ManagerSection::Maintenance, "Maintenance");
+            self.section_nav_button(ui, ManagerSection::About, "About");
+        });
+    }
+
+    fn section_nav_button(&mut self, ui: &mut egui::Ui, section: ManagerSection, label: &str) {
+        let selected = self.active_section == section;
+        let text = if selected {
+            RichText::new(label).strong().color(app_accent())
+        } else {
+            RichText::new(label).strong().color(strong_text())
+        };
+        let button = egui::Button::new(text)
+            .fill(if selected {
+                app_nav_active()
+            } else {
+                app_nav_inactive()
+            })
+            .stroke(egui::Stroke::new(1.0, app_card_border()));
+        if ui
+            .add_sized([ui.available_width(), 34.0], button)
+            .clicked()
+        {
+            self.active_section = section;
+        }
+        ui.add_space(6.0);
+    }
+
     fn render_title_bar(&self, ui: &mut egui::Ui) {
+        let (section_title, section_subtitle) = self.active_section_title();
+        let app_track = if self.update_app_preview {
+            "preview"
+        } else {
+            "stable"
+        };
         ui.horizontal(|ui| {
-            ui.add_space(8.0);
             ui.vertical(|ui| {
-                ui.label(RichText::new("MeowKey Manager").size(20.0).strong());
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("MeowKey Manager").size(14.0).strong());
+                    ui.separator();
+                    ui.label(
+                        RichText::new(section_title)
+                            .size(12.0)
+                            .color(strong_text()),
+                    );
+                });
                 ui.label(
-                    RichText::new("正式管理通道 / 调试 HID 工作台")
+                    RichText::new(section_subtitle)
                         .size(12.0)
                         .color(muted_text()),
                 );
             });
-            ui.add_space(12.0);
-            ui.separator();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 status_chip(
                     ui,
@@ -482,15 +742,26 @@ impl MeowKeyManagerApp {
                     chip_blue(),
                 );
                 status_chip(ui, self.backend.backend_name(), chip_neutral());
-                status_chip(ui, env!("CARGO_PKG_VERSION"), chip_neutral());
+                status_chip(ui, app_track, chip_neutral());
+                status_chip(ui, app_version_label(), chip_neutral());
             });
         });
     }
 
     fn render_sidebar(&mut self, ui: &mut egui::Ui) {
+        let is_overview = self.active_section == ManagerSection::Overview;
+        let is_devices = self.active_section == ManagerSection::Devices;
+        let is_credentials = self.active_section == ManagerSection::Credentials;
+        let is_security = self.active_section == ManagerSection::Security;
+        let is_maintenance = self.active_section == ManagerSection::Maintenance;
+        let is_about = self.active_section == ManagerSection::About;
+
         ScrollArea::vertical()
             .id_salt("sidebar-scroll")
             .show(ui, |ui| {
+                self.render_section_nav(ui);
+                ui.add_space(10.0);
+
                 card(ui, |ui| {
                     card_header(
                         ui,
@@ -521,158 +792,221 @@ impl MeowKeyManagerApp {
                             .then(|| self.refresh_info());
                     });
                     ui.add_space(8.0);
-                    ui.horizontal_wrapped(|ui| {
-                        secondary_button(ui, "拉取诊断")
-                            .clicked()
-                            .then(|| self.fetch_diagnostics());
-                        secondary_button(ui, "正式目录")
-                            .clicked()
-                            .then(|| self.refresh_formal_credential_catalog());
-                        secondary_button(ui, "安全状态")
-                            .clicked()
-                            .then(|| self.refresh_formal_security_state());
-                        secondary_button(ui, "列出凭据")
-                            .clicked()
-                            .then(|| self.list_credentials());
-                        secondary_button(ui, "清空诊断")
-                            .clicked()
-                            .then(|| self.clear_diagnostics());
-                        secondary_button(ui, "清空凭据")
-                            .clicked()
-                            .then(|| self.clear_credentials());
-                    });
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(6.0);
-                    ui.label(RichText::new("正式管理写操作").size(13.0).strong());
-                    ui.label(
-                        RichText::new("Rust 侧对齐 WinUI：授权、单条删除、UP 写入。")
+                    if is_overview || is_credentials || is_security || is_maintenance {
+                        ui.horizontal_wrapped(|ui| {
+                            if is_overview || is_maintenance {
+                                secondary_button(ui, "拉取诊断")
+                                    .clicked()
+                                    .then(|| self.fetch_diagnostics());
+                                secondary_button(ui, "列出凭据")
+                                    .clicked()
+                                    .then(|| self.list_credentials());
+                                secondary_button(ui, "清空诊断")
+                                    .clicked()
+                                    .then(|| self.clear_diagnostics());
+                                secondary_button(ui, "清空凭据")
+                                    .clicked()
+                                    .then(|| self.clear_credentials());
+                            }
+                            if is_overview || is_credentials || is_security {
+                                secondary_button(ui, "正式目录")
+                                    .clicked()
+                                    .then(|| self.refresh_formal_credential_catalog());
+                                secondary_button(ui, "安全状态")
+                                    .clicked()
+                                    .then(|| self.refresh_formal_security_state());
+                            }
+                        });
+                    }
+
+                    if is_overview || is_security {
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(6.0);
+                        ui.label(RichText::new("正式管理写操作").size(13.0).strong());
+                        ui.label(
+                            RichText::new("Rust 侧对齐 WinUI：授权、单条删除、UP 写入。")
+                                .size(11.0)
+                                .color(muted_text()),
+                        );
+                        ui.add_space(6.0);
+                        ui.horizontal_wrapped(|ui| {
+                            secondary_button(ui, "目录鉴权")
+                                .clicked()
+                                .then(|| self.request_formal_catalog_authorization());
+                            secondary_button(ui, "删除槽位")
+                                .clicked()
+                                .then(|| self.delete_formal_credential_slot());
+                            secondary_button(ui, "写入UP(持久)")
+                                .clicked()
+                                .then(|| self.set_formal_user_presence(true));
+                            secondary_button(ui, "写入UP(会话)")
+                                .clicked()
+                                .then(|| self.set_formal_user_presence(false));
+                            secondary_button(ui, "清理会话UP")
+                                .clicked()
+                                .then(|| self.clear_formal_user_presence_session());
+                        });
+                        ui.add_space(6.0);
+                        form_label(ui, "删除 slot");
+                        ui.add(
+                            TextEdit::singleline(&mut self.manager_delete_slot)
+                                .desired_width(100.0)
+                                .hint_text("0..65535"),
+                        );
+                        form_label(ui, "UP source");
+                        ui.add(
+                            TextEdit::singleline(&mut self.manager_up_source)
+                                .desired_width(120.0)
+                                .hint_text("none / bootsel / gpio"),
+                        );
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new("GPIO").size(12.0).color(muted_text()));
+                            ui.add(egui::DragValue::new(&mut self.manager_up_gpio_pin).range(-1..=47));
+                            ui.checkbox(&mut self.manager_up_gpio_active_low, "ActiveLow");
+                        });
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new("Tap").size(12.0).color(muted_text()));
+                            ui.add(egui::DragValue::new(&mut self.manager_up_tap_count).range(1..=4));
+                            ui.label(RichText::new("WindowMs").size(12.0).color(muted_text()));
+                            ui.add(
+                                egui::DragValue::new(&mut self.manager_up_gesture_window_ms)
+                                    .range(100..=5000),
+                            );
+                        });
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new("TimeoutMs").size(12.0).color(muted_text()));
+                            ui.add(
+                                egui::DragValue::new(&mut self.manager_up_request_timeout_ms)
+                                    .range(500..=30000),
+                            );
+                        });
+                    }
+
+                    if is_overview || is_about {
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(6.0);
+                        ui.label(RichText::new("版本更新").size(13.0).strong());
+                        ui.label(
+                            RichText::new(
+                                "对齐 WinUI 关于页：直接检查 GitHub Releases，分离 stable / preview。",
+                            )
                             .size(11.0)
                             .color(muted_text()),
-                    );
-                    ui.add_space(6.0);
-                    ui.horizontal_wrapped(|ui| {
-                        secondary_button(ui, "目录鉴权")
-                            .clicked()
-                            .then(|| self.request_formal_catalog_authorization());
-                        secondary_button(ui, "删除槽位")
-                            .clicked()
-                            .then(|| self.delete_formal_credential_slot());
-                        secondary_button(ui, "写入UP(持久)")
-                            .clicked()
-                            .then(|| self.set_formal_user_presence(true));
-                        secondary_button(ui, "写入UP(会话)")
-                            .clicked()
-                            .then(|| self.set_formal_user_presence(false));
-                        secondary_button(ui, "清理会话UP")
-                            .clicked()
-                            .then(|| self.clear_formal_user_presence_session());
-                    });
-                    ui.add_space(6.0);
-                    form_label(ui, "删除 slot");
-                    ui.add(
-                        TextEdit::singleline(&mut self.manager_delete_slot)
-                            .desired_width(100.0)
-                            .hint_text("0..65535"),
-                    );
-                    form_label(ui, "UP source");
-                    ui.add(
-                        TextEdit::singleline(&mut self.manager_up_source)
-                            .desired_width(120.0)
-                            .hint_text("none / bootsel / gpio"),
-                    );
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new("GPIO").size(12.0).color(muted_text()));
-                        ui.add(egui::DragValue::new(&mut self.manager_up_gpio_pin).range(-1..=47));
-                        ui.checkbox(&mut self.manager_up_gpio_active_low, "ActiveLow");
-                    });
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new("Tap").size(12.0).color(muted_text()));
-                        ui.add(egui::DragValue::new(&mut self.manager_up_tap_count).range(1..=4));
-                        ui.label(RichText::new("WindowMs").size(12.0).color(muted_text()));
-                        ui.add(
-                            egui::DragValue::new(&mut self.manager_up_gesture_window_ms)
-                                .range(100..=5000),
                         );
-                    });
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new("TimeoutMs").size(12.0).color(muted_text()));
+                        form_label(ui, "GitHub Releases URL");
                         ui.add(
-                            egui::DragValue::new(&mut self.manager_up_request_timeout_ms)
-                                .range(500..=30000),
+                            TextEdit::singleline(&mut self.update_source_url)
+                                .desired_width(f32::INFINITY)
+                                .hint_text("https://github.com/meowhuan/MeowKey/releases"),
                         );
+                        let app_toggle_changed = ui
+                            .checkbox(&mut self.update_app_preview, "加入管理器 preview 计划")
+                            .changed();
+                        let firmware_toggle_changed = ui
+                            .checkbox(&mut self.update_firmware_preview, "加入固件 preview 计划")
+                            .changed();
+                        if app_toggle_changed {
+                            self.persist_update_preferences();
+                            self.push_log("更新", "已切换管理器 preview 计划。");
+                        }
+                        if firmware_toggle_changed {
+                            self.persist_update_preferences();
+                            self.push_log("更新", "已切换固件 preview 计划。");
+                        }
+                        ui.horizontal_wrapped(|ui| {
+                            secondary_button(ui, "保存更新源")
+                                .clicked()
+                                .then(|| self.persist_update_preferences());
+                            action_button(ui, "检查更新")
+                                .clicked()
+                                .then(|| self.check_release_updates());
+                        });
+                    }
+                });
+
+                if is_overview || is_devices || is_credentials {
+                    ui.add_space(10.0);
+
+                    card(ui, |ui| {
+                        card_header(ui, "会话状态", "真实设备状态和当前通道。");
+                        let session = self.session.clone().unwrap_or_default();
+                        let capability_text = if session.capabilities.is_empty() {
+                            "-".to_string()
+                        } else {
+                            session.capabilities.join(", ")
+                        };
+                        fact_row(ui, "后端", &session.backend_name);
+                        fact_row(ui, "设备", &session.device_name);
+                        fact_row(ui, "设备 ID", &session.device_id);
+                        fact_row(ui, "通道", &session.channel_id);
+                        fact_row(ui, "状态", &session.state_label);
+                        fact_row(ui, "能力", &capability_text);
                     });
-                });
+                }
 
-                ui.add_space(10.0);
+                if is_overview || is_credentials {
+                    ui.add_space(10.0);
 
-                card(ui, |ui| {
-                    card_header(ui, "会话状态", "真实设备状态和当前通道。");
-                    let session = self.session.clone().unwrap_or_default();
-                    let capability_text = if session.capabilities.is_empty() {
-                        "-".to_string()
-                    } else {
-                        session.capabilities.join(", ")
-                    };
-                    fact_row(ui, "后端", &session.backend_name);
-                    fact_row(ui, "设备", &session.device_name);
-                    fact_row(ui, "设备 ID", &session.device_id);
-                    fact_row(ui, "通道", &session.channel_id);
-                    fact_row(ui, "状态", &session.state_label);
-                    fact_row(ui, "能力", &capability_text);
-                });
+                    card(ui, |ui| {
+                        card_header(
+                            ui,
+                            "注册测试",
+                            "最小 makeCredential 请求；支持 excludeList。",
+                        );
+                        form_label(ui, "RP ID");
+                        ui.add(input_line(&mut self.register_form.rp_id));
+                        form_label(ui, "用户 ID");
+                        ui.add(input_line(&mut self.register_form.user_id));
+                        form_label(ui, "用户名");
+                        ui.add(input_line(&mut self.register_form.user_name));
+                        form_label(ui, "显示名");
+                        ui.add(input_line(&mut self.register_form.display_name));
+                        form_label(ui, "excludeList");
+                        ui.add(
+                            TextEdit::multiline(&mut self.register_form.exclude_list)
+                                .desired_rows(4)
+                                .hint_text("每行一个 credentialId"),
+                        );
+                        ui.add_space(6.0);
+                        action_button(ui, "注册凭据")
+                            .clicked()
+                            .then(|| self.register_credential());
+                    });
 
-                ui.add_space(10.0);
+                    ui.add_space(10.0);
 
-                card(ui, |ui| {
-                    card_header(
-                        ui,
-                        "注册测试",
-                        "最小 makeCredential 请求；支持 excludeList。",
-                    );
-                    form_label(ui, "RP ID");
-                    ui.add(input_line(&mut self.register_form.rp_id));
-                    form_label(ui, "用户 ID");
-                    ui.add(input_line(&mut self.register_form.user_id));
-                    form_label(ui, "用户名");
-                    ui.add(input_line(&mut self.register_form.user_name));
-                    form_label(ui, "显示名");
-                    ui.add(input_line(&mut self.register_form.display_name));
-                    form_label(ui, "excludeList");
-                    ui.add(
-                        TextEdit::multiline(&mut self.register_form.exclude_list)
-                            .desired_rows(4)
-                            .hint_text("每行一个 credentialId"),
-                    );
-                    ui.add_space(6.0);
-                    action_button(ui, "注册凭据")
-                        .clicked()
-                        .then(|| self.register_credential());
-                });
-
-                ui.add_space(10.0);
-
-                card(ui, |ui| {
-                    card_header(ui, "断言测试", "可指定 credentialId，留空走 discoverable。");
-                    form_label(ui, "RP ID");
-                    ui.add(input_line(&mut self.assertion_form.rp_id));
-                    form_label(ui, "Credential ID");
-                    ui.add(
-                        TextEdit::singleline(&mut self.assertion_form.credential_id)
-                            .hint_text("可选：十六进制 credentialId"),
-                    );
-                    ui.add_space(6.0);
-                    action_button(ui, "获取断言")
-                        .clicked()
-                        .then(|| self.get_assertion());
-                });
+                    card(ui, |ui| {
+                        card_header(ui, "断言测试", "可指定 credentialId，留空走 discoverable。");
+                        form_label(ui, "RP ID");
+                        ui.add(input_line(&mut self.assertion_form.rp_id));
+                        form_label(ui, "Credential ID");
+                        ui.add(
+                            TextEdit::singleline(&mut self.assertion_form.credential_id)
+                                .hint_text("可选：十六进制 credentialId"),
+                        );
+                        ui.add_space(6.0);
+                        action_button(ui, "获取断言")
+                            .clicked()
+                            .then(|| self.get_assertion());
+                    });
+                }
             });
     }
 
     fn render_main(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let is_overview = self.active_section == ManagerSection::Overview;
+        let is_devices = self.active_section == ManagerSection::Devices;
+        let is_credentials = self.active_section == ManagerSection::Credentials;
+        let is_security = self.active_section == ManagerSection::Security;
+        let is_maintenance = self.active_section == ManagerSection::Maintenance;
+        let is_about = self.active_section == ManagerSection::About;
+        let (section_title, section_subtitle) = self.active_section_title();
+
         ScrollArea::vertical().id_salt("main-scroll").show(ui, |ui| {
             card(ui, |ui| {
-                card_header(ui, "当前摘要", "把 Android-Cam-Bridge 顶部摘要卡的节奏搬到这里。");
+                card_header(ui, section_title, section_subtitle);
                 ui.columns(4, |columns| {
                     summary_card(&mut columns[0], "后端", self.backend.backend_name());
                     summary_card(
@@ -704,161 +1038,247 @@ impl MeowKeyManagerApp {
 
             ui.add_space(12.0);
 
-            card(ui, |ui| {
-                card_header(ui, "正式写操作响应", "授权、删除、UP 写入命令的最近一次返回。");
-                copy_toolbar(ui, ctx, "正式写操作响应", &self.manager_write_output);
-                output_panel(ui, "manager-write-output", &self.manager_write_output, 180.0);
-            });
+            if is_overview || is_about {
+                card(ui, |ui| {
+                    card_header(ui, "版本更新", "与 WinUI 关于页一致：GitHub Releases 检查、stable/preview 分轨。");
+                    ui.label(RichText::new(&self.update_last_checked_text).size(12.0).color(muted_text()));
+                    ui.label(RichText::new(&self.update_source_text).size(12.0).color(muted_text()));
+                    ui.add_space(8.0);
+                    ui.columns(2, |columns| {
+                        let manager_download = self.update_manager_download_url.clone();
+                        let manager_notes = self.update_manager_notes_url.clone();
+                        card(&mut columns[0], |ui| {
+                            card_header(ui, "管理器（WinUI）", "发行版状态");
+                            ui.label(RichText::new(&self.update_manager_state_text).strong());
+                            ui.label(RichText::new(&self.update_manager_current_text).size(12.0));
+                            ui.label(RichText::new(&self.update_manager_latest_text).size(12.0).color(muted_text()));
+                            ui.horizontal_wrapped(|ui| {
+                                if ui
+                                    .add_enabled(!manager_download.is_empty(), egui::Button::new("打开下载页"))
+                                    .clicked()
+                                {
+                                    self.open_update_url(&manager_download);
+                                }
+                                if ui
+                                    .add_enabled(!manager_notes.is_empty(), egui::Button::new("发行说明"))
+                                    .clicked()
+                                {
+                                    self.open_update_url(&manager_notes);
+                                }
+                            });
+                        });
 
-            ui.add_space(12.0);
+                        let firmware_download = self.update_firmware_download_url.clone();
+                        let firmware_notes = self.update_firmware_notes_url.clone();
+                        card(&mut columns[1], |ui| {
+                            card_header(ui, "固件", "发行版状态");
+                            ui.label(RichText::new(&self.update_firmware_state_text).strong());
+                            ui.label(RichText::new(&self.update_firmware_current_text).size(12.0));
+                            ui.label(RichText::new(&self.update_firmware_latest_text).size(12.0).color(muted_text()));
+                            ui.horizontal_wrapped(|ui| {
+                                if ui
+                                    .add_enabled(!firmware_download.is_empty(), egui::Button::new("打开下载页"))
+                                    .clicked()
+                                {
+                                    self.open_update_url(&firmware_download);
+                                }
+                                if ui
+                                    .add_enabled(!firmware_notes.is_empty(), egui::Button::new("发行说明"))
+                                    .clicked()
+                                {
+                                    self.open_update_url(&firmware_notes);
+                                }
+                            });
+                        });
+                    });
 
-            ui.columns(2, |columns| {
-                card(&mut columns[0], |ui| {
-                    card_header(ui, "正式凭据目录", "管理通道 0x03 的分页聚合结果。");
-                    copy_toolbar(ui, ctx, "正式凭据目录", &self.manager_catalog_output);
-                    output_panel(ui, "manager-catalog-output", &self.manager_catalog_output, 220.0);
+                    ui.add_space(8.0);
+                    copy_toolbar(ui, ctx, "更新检查结果", &self.update_result_output);
+                    output_panel(ui, "update-result-output", &self.update_result_output, 170.0);
                 });
-                card(&mut columns[1], |ui| {
-                    card_header(ui, "正式安全状态", "管理通道 0x04 返回的结构化安全视图。");
-                    copy_toolbar(ui, ctx, "正式安全状态", &self.manager_security_output);
-                    output_panel(ui, "manager-security-output", &self.manager_security_output, 220.0);
+                ui.add_space(12.0);
+            }
+
+            if is_overview || is_security {
+                card(ui, |ui| {
+                    card_header(ui, "正式写操作响应", "授权、删除、UP 写入命令的最近一次返回。");
+                    copy_toolbar(ui, ctx, "正式写操作响应", &self.manager_write_output);
+                    output_panel(ui, "manager-write-output", &self.manager_write_output, 180.0);
                 });
-            });
+                ui.add_space(12.0);
+            }
 
-            ui.add_space(12.0);
-
-            ui.columns(2, |columns| {
-                card(&mut columns[0], |ui| {
-                    card_header(ui, "初始化响应", "CTAPHID_INIT 的结构化结果。");
-                    copy_toolbar(ui, ctx, "初始化响应", &self.init_output);
-                    output_panel(ui, "init-output", &self.init_output, 150.0);
+            if is_overview || is_credentials || is_security {
+                ui.columns(2, |columns| {
+                    card(&mut columns[0], |ui| {
+                        card_header(ui, "正式凭据目录", "管理通道 0x03 的分页聚合结果。");
+                        copy_toolbar(ui, ctx, "正式凭据目录", &self.manager_catalog_output);
+                        output_panel(ui, "manager-catalog-output", &self.manager_catalog_output, 220.0);
+                    });
+                    card(&mut columns[1], |ui| {
+                        card_header(ui, "正式安全状态", "管理通道 0x04 返回的结构化安全视图。");
+                        copy_toolbar(ui, ctx, "正式安全状态", &self.manager_security_output);
+                        output_panel(ui, "manager-security-output", &self.manager_security_output, 220.0);
+                    });
                 });
-                card(&mut columns[1], |ui| {
-                    card_header(ui, "认证器信息", "authenticatorGetInfo 返回体。");
-                    copy_toolbar(ui, ctx, "认证器信息", &self.info_output);
-                    output_panel(ui, "info-output", &self.info_output, 170.0);
+                ui.add_space(12.0);
+            }
+
+            if is_overview || is_devices || is_maintenance {
+                ui.columns(2, |columns| {
+                    card(&mut columns[0], |ui| {
+                        card_header(ui, "初始化响应", "CTAPHID_INIT 的结构化结果。");
+                        copy_toolbar(ui, ctx, "初始化响应", &self.init_output);
+                        output_panel(ui, "init-output", &self.init_output, 150.0);
+                    });
+                    card(&mut columns[1], |ui| {
+                        card_header(ui, "认证器信息", "authenticatorGetInfo 返回体。");
+                        copy_toolbar(ui, ctx, "认证器信息", &self.info_output);
+                        output_panel(ui, "info-output", &self.info_output, 170.0);
+                    });
                 });
-            });
+                ui.add_space(12.0);
+            }
 
-            ui.add_space(12.0);
-
-            ui.columns(2, |columns| {
-                card(&mut columns[0], |ui| {
-                    card_header(ui, "注册结果", "makeCredential 的状态码、请求体和响应体。");
-                    copy_toolbar(ui, ctx, "注册结果", &self.make_credential_output);
-                    output_panel(ui, "register-output", &self.make_credential_output, 200.0);
+            if is_overview || is_credentials {
+                ui.columns(2, |columns| {
+                    card(&mut columns[0], |ui| {
+                        card_header(ui, "注册结果", "makeCredential 的状态码、请求体和响应体。");
+                        copy_toolbar(ui, ctx, "注册结果", &self.make_credential_output);
+                        output_panel(ui, "register-output", &self.make_credential_output, 200.0);
+                    });
+                    card(&mut columns[1], |ui| {
+                        card_header(ui, "断言结果", "getAssertion 的状态码、请求体和响应体。");
+                        copy_toolbar(ui, ctx, "断言结果", &self.get_assertion_output);
+                        output_panel(ui, "assertion-output", &self.get_assertion_output, 200.0);
+                    });
                 });
-                card(&mut columns[1], |ui| {
-                    card_header(ui, "断言结果", "getAssertion 的状态码、请求体和响应体。");
-                    copy_toolbar(ui, ctx, "断言结果", &self.get_assertion_output);
-                    output_panel(ui, "assertion-output", &self.get_assertion_output, 200.0);
+                ui.add_space(12.0);
+            }
+
+            if is_overview || is_credentials || is_maintenance {
+                ui.columns(2, |columns| {
+                    card(&mut columns[0], |ui| {
+                        card_header(ui, "固件诊断", "拉取 FIDO 接口最近一次收到的真实系统请求轨迹。");
+                        copy_toolbar(ui, ctx, "固件诊断", &self.diagnostic_output);
+                        output_panel(ui, "diag-output", &self.diagnostic_output, 180.0);
+                    });
+
+                    card(&mut columns[1], |ui| {
+                        card_header(ui, "凭据缓存", "当前会话看到的 credential 列表。");
+                        ScrollArea::vertical()
+                            .id_salt("credential-cache-scroll")
+                            .max_height(240.0)
+                            .show(ui, |ui| {
+                                for (index, credential) in self.credentials.iter().enumerate() {
+                                    let selected = self.selected_credential == Some(index);
+                                    let title = format!("{}  {}", credential.rp_id, credential.user_name);
+                                    if ui.selectable_label(selected, title).clicked() {
+                                        self.selected_credential = Some(index);
+                                        self.assertion_form.credential_id = credential.credential_id_hex.clone();
+                                    }
+                                    if selected {
+                                        accent_card(ui, |ui| {
+                                            ui.monospace(format!(
+                                                "credentialId: {}\nuserId: {}\ndisplayName: {}\nsignCount: {}\ndiscoverable: {}",
+                                                credential.credential_id_hex,
+                                                credential.user_id_hex,
+                                                credential.display_name,
+                                                credential.sign_count,
+                                                credential.discoverable
+                                            ));
+                                        });
+                                    }
+                                    ui.add_space(6.0);
+                                }
+                            });
+                        ui.add_space(8.0);
+                        ui.horizontal_wrapped(|ui| {
+                            secondary_button(ui, "移除选中凭据")
+                                .clicked()
+                                .then(|| self.remove_selected_credential());
+                            secondary_button(ui, "填入 excludeList")
+                                .clicked()
+                                .then(|| self.fill_selected_credential_into_exclude_list());
+                        });
+                    });
                 });
-            });
+                ui.add_space(12.0);
+            }
 
-            ui.add_space(12.0);
-
-            ui.columns(2, |columns| {
-                card(&mut columns[0], |ui| {
-                    card_header(ui, "固件诊断", "拉取 FIDO 接口最近一次收到的真实系统请求轨迹。");
-                    copy_toolbar(ui, ctx, "固件诊断", &self.diagnostic_output);
-                    output_panel(ui, "diag-output", &self.diagnostic_output, 180.0);
-                });
-
-                card(&mut columns[1], |ui| {
-                    card_header(ui, "凭据缓存", "当前会话看到的 credential 列表。");
+            if is_overview || is_maintenance || is_about {
+                card(ui, |ui| {
+                    card_header(ui, "原始日志", "按时间倒序保留 HID / CTAP 原始会话轨迹。");
+                    copy_toolbar(ui, ctx, "原始日志", &flatten_logs(&self.logs));
                     ScrollArea::vertical()
-                        .id_salt("credential-cache-scroll")
-                        .max_height(240.0)
+                        .id_salt("raw-log-scroll")
+                        .max_height(260.0)
                         .show(ui, |ui| {
-                            for (index, credential) in self.credentials.iter().enumerate() {
-                                let selected = self.selected_credential == Some(index);
-                                let title = format!("{}  {}", credential.rp_id, credential.user_name);
-                                if ui.selectable_label(selected, title).clicked() {
-                                    self.selected_credential = Some(index);
-                                    self.assertion_form.credential_id = credential.credential_id_hex.clone();
-                                }
-                                if selected {
-                                    accent_card(ui, |ui| {
-                                        ui.monospace(format!(
-                                            "credentialId: {}\nuserId: {}\ndisplayName: {}\nsignCount: {}\ndiscoverable: {}",
-                                            credential.credential_id_hex,
-                                            credential.user_id_hex,
-                                            credential.display_name,
-                                            credential.sign_count,
-                                            credential.discoverable
-                                        ));
+                            for entry in &self.logs {
+                                accent_card(ui, |ui| {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(
+                                            RichText::new(&entry.timestamp)
+                                                .monospace()
+                                                .size(11.0)
+                                                .color(muted_text()),
+                                        );
+                                        status_chip(ui, &entry.tag, chip_neutral());
                                     });
-                                }
+                                    ui.add_space(4.0);
+                                    ui.label(&entry.body);
+                                });
                                 ui.add_space(6.0);
                             }
                         });
-                    ui.add_space(8.0);
-                    ui.horizontal_wrapped(|ui| {
-                        secondary_button(ui, "移除选中凭据")
-                            .clicked()
-                            .then(|| self.remove_selected_credential());
-                        secondary_button(ui, "填入 excludeList")
-                            .clicked()
-                            .then(|| self.fill_selected_credential_into_exclude_list());
-                    });
                 });
-            });
-
-            ui.add_space(12.0);
-
-            card(ui, |ui| {
-                card_header(ui, "原始日志", "按时间倒序保留 HID / CTAP 原始会话轨迹。");
-                copy_toolbar(ui, ctx, "原始日志", &flatten_logs(&self.logs));
-                ScrollArea::vertical()
-                    .id_salt("raw-log-scroll")
-                    .max_height(260.0)
-                    .show(ui, |ui| {
-                        for entry in &self.logs {
-                            accent_card(ui, |ui| {
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.label(
-                                        RichText::new(&entry.timestamp)
-                                            .monospace()
-                                            .size(11.0)
-                                            .color(muted_text()),
-                                    );
-                                    status_chip(ui, &entry.tag, chip_neutral());
-                                });
-                                ui.add_space(4.0);
-                                ui.label(&entry.body);
-                            });
-                            ui.add_space(6.0);
-                        }
-                    });
-            });
+            }
         });
     }
 }
 
 impl eframe::App for MeowKeyManagerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let mut visuals = egui::Visuals::light();
-        visuals.panel_fill = Color32::from_rgb(244, 247, 251);
-        visuals.window_fill = Color32::from_rgb(244, 247, 251);
-        visuals.extreme_bg_color = Color32::from_rgb(247, 248, 250);
-        visuals.widgets.noninteractive.bg_fill =
-            Color32::from_rgba_unmultiplied(255, 255, 255, 225);
-        visuals.widgets.inactive.bg_fill = Color32::from_rgba_unmultiplied(255, 255, 255, 240);
-        visuals.widgets.hovered.bg_fill = Color32::from_rgb(236, 243, 252);
-        visuals.widgets.active.bg_fill = Color32::from_rgb(228, 239, 251);
-        visuals.selection.bg_fill = Color32::from_rgb(217, 233, 252);
-        ctx.set_visuals(visuals);
+        apply_winui_visuals(ctx);
 
         egui::TopBottomPanel::top("titlebar")
-            .exact_height(58.0)
+            .frame(
+                egui::Frame::default()
+                    .fill(app_chrome_background())
+                    .inner_margin(egui::Margin::symmetric(14, 2)),
+            )
+            .exact_height(44.0)
             .show(ctx, |ui| self.render_title_bar(ui));
 
         egui::SidePanel::left("sidebar")
-            .default_width(292.0)
-            .resizable(true)
+            .frame(
+                egui::Frame::default()
+                    .fill(app_chrome_background())
+                    .inner_margin(egui::Margin {
+                        left: 14,
+                        right: 8,
+                        top: 12,
+                        bottom: 14,
+                    }),
+            )
+            .default_width(250.0)
+            .min_width(250.0)
+            .max_width(250.0)
+            .resizable(false)
             .show(ctx, |ui| self.render_sidebar(ui));
 
-        egui::CentralPanel::default().show(ctx, |ui| self.render_main(ui, ctx));
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::default()
+                    .fill(app_chrome_background())
+                    .inner_margin(egui::Margin {
+                        left: 8,
+                        right: 14,
+                        top: 12,
+                        bottom: 14,
+                    }),
+            )
+            .show(ctx, |ui| self.render_main(ui, ctx));
     }
 }
 
@@ -886,9 +1306,9 @@ fn install_cjk_fonts(ctx: &egui::Context) {
 fn card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame {
         inner_margin: egui::Margin::same(18),
-        corner_radius: egui::CornerRadius::same(22),
-        fill: Color32::from_rgba_unmultiplied(252, 252, 253, 228),
-        stroke: egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 20)),
+        corner_radius: egui::CornerRadius::same(20),
+        fill: app_pane_background(),
+        stroke: egui::Stroke::new(1.0, app_card_border()),
         ..Default::default()
     }
     .show(ui, add_contents);
@@ -898,15 +1318,15 @@ fn accent_card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame {
         inner_margin: egui::Margin::same(12),
         corner_radius: egui::CornerRadius::same(16),
-        fill: Color32::from_rgba_unmultiplied(255, 255, 255, 244),
-        stroke: egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 16)),
+        fill: app_card_background(),
+        stroke: egui::Stroke::new(1.0, app_card_border()),
         ..Default::default()
     }
     .show(ui, add_contents);
 }
 
 fn card_header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
-    ui.label(RichText::new(title).size(18.0).strong());
+    ui.label(RichText::new(title).size(17.0).strong().color(strong_text()));
     ui.label(RichText::new(subtitle).size(12.0).color(muted_text()));
     ui.add_space(10.0);
 }
@@ -915,7 +1335,7 @@ fn summary_card(ui: &mut egui::Ui, label: &str, value: &str) {
     accent_card(ui, |ui| {
         ui.label(RichText::new(label).size(12.0).color(muted_text()));
         ui.add_space(2.0);
-        ui.label(RichText::new(value).size(15.0).strong());
+        ui.label(RichText::new(value).size(14.0).strong().color(strong_text()));
     });
 }
 
@@ -975,35 +1395,118 @@ fn status_chip(ui: &mut egui::Ui, text: &str, fill: Color32) {
         inner_margin: egui::Margin::symmetric(10, 6),
         corner_radius: egui::CornerRadius::same(11),
         fill,
-        stroke: egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 18)),
+        stroke: egui::Stroke::new(1.0, app_card_border()),
         ..Default::default()
     }
     .show(ui, |ui| {
-        ui.label(RichText::new(text).size(11.5).strong());
+        ui.label(RichText::new(text).size(11.5).strong().color(strong_text()));
     });
 }
 
 fn action_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add_sized(
         [106.0, 32.0],
-        egui::Button::new(RichText::new(label).strong()).fill(Color32::from_rgb(231, 241, 252)),
+        egui::Button::new(RichText::new(label).strong().color(strong_text()))
+            .fill(app_nav_active())
+            .stroke(egui::Stroke::new(1.0, app_card_border())),
     )
 }
 
 fn secondary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
-    ui.add_sized([96.0, 32.0], egui::Button::new(label))
+    ui.add_sized(
+        [96.0, 32.0],
+        egui::Button::new(RichText::new(label).color(strong_text()))
+            .fill(app_card_background())
+            .stroke(egui::Stroke::new(1.0, app_card_border())),
+    )
 }
 
 fn muted_text() -> Color32 {
-    Color32::from_rgb(116, 123, 135)
+    Color32::from_rgba_unmultiplied(48, 48, 48, 128)
+}
+
+fn strong_text() -> Color32 {
+    Color32::from_rgb(8, 16, 25)
 }
 
 fn chip_neutral() -> Color32 {
-    Color32::from_rgba_unmultiplied(255, 255, 255, 240)
+    app_card_background()
 }
 
 fn chip_blue() -> Color32 {
+    app_nav_active()
+}
+
+fn app_chrome_background() -> Color32 {
+    Color32::from_rgba_unmultiplied(255, 255, 255, 0)
+}
+
+fn app_pane_background() -> Color32 {
+    Color32::from_rgba_unmultiplied(252, 252, 253, 204)
+}
+
+fn app_card_background() -> Color32 {
+    Color32::from_rgba_unmultiplied(255, 255, 255, 242)
+}
+
+fn app_card_border() -> Color32 {
+    Color32::from_rgba_unmultiplied(0, 0, 0, 20)
+}
+
+fn app_output_background() -> Color32 {
+    Color32::from_rgb(245, 247, 250)
+}
+
+fn app_nav_inactive() -> Color32 {
+    Color32::from_rgba_unmultiplied(0, 0, 0, 20)
+}
+
+fn app_nav_active() -> Color32 {
     Color32::from_rgba_unmultiplied(0, 103, 192, 26)
+}
+
+fn app_accent() -> Color32 {
+    Color32::from_rgb(0, 103, 192)
+}
+
+fn apply_winui_visuals(ctx: &egui::Context) {
+    let mut visuals = egui::Visuals::light();
+    visuals.panel_fill = app_output_background();
+    visuals.window_fill = app_output_background();
+    visuals.faint_bg_color = app_pane_background();
+    visuals.extreme_bg_color = app_output_background();
+    visuals.override_text_color = Some(strong_text());
+    visuals.hyperlink_color = app_accent();
+    visuals.selection.bg_fill = app_nav_active();
+    visuals.selection.stroke = egui::Stroke::new(1.0, app_accent());
+
+    visuals.widgets.noninteractive.bg_fill = app_card_background();
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, app_card_border());
+    visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(12);
+
+    visuals.widgets.inactive.bg_fill = app_card_background();
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, app_card_border());
+    visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(12);
+
+    visuals.widgets.hovered.bg_fill = app_nav_active();
+    visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, app_card_border());
+    visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(12);
+
+    visuals.widgets.active.bg_fill = app_nav_active();
+    visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, app_card_border());
+    visuals.widgets.active.corner_radius = egui::CornerRadius::same(12);
+
+    visuals.widgets.open.bg_fill = app_nav_active();
+    visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0, app_card_border());
+    visuals.widgets.open.corner_radius = egui::CornerRadius::same(12);
+    ctx.set_visuals(visuals);
+
+    let mut style = (*ctx.style()).clone();
+    style.spacing.item_spacing = egui::vec2(10.0, 10.0);
+    style.spacing.button_padding = egui::vec2(14.0, 8.0);
+    style.spacing.menu_margin = egui::Margin::same(8);
+    style.visuals.override_text_color = Some(strong_text());
+    ctx.set_style(style);
 }
 
 fn flatten_logs(entries: &[LogEntry]) -> String {
@@ -1016,4 +1519,13 @@ fn flatten_logs(entries: &[LogEntry]) -> String {
 
 fn to_pretty_json<T: Serialize>(value: &T) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|error| format!("序列化失败: {error}"))
+}
+
+fn app_version_label() -> &'static str {
+    option_env!("MEOWKEY_RELEASE_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+}
+
+fn format_unix_ms(unix_ms: u128) -> String {
+    let seconds = (unix_ms / 1000) as u64;
+    format!("{seconds}")
 }

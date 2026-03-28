@@ -183,6 +183,8 @@ Treat the preset name as the real long-term identifier. The shopping link is onl
 - Hardened builds disable Debug HID and are the better default for redistribution.
 - The Windows desktop manager now lives in `windows/gui/MeowKey.Manager/` and is organized around management sections instead of protocol test panels.
 - The Linux desktop surface currently stays on Rust + egui/eframe so the existing cross-platform backend can keep moving without a second native toolkit migration.
+- The Linux manager now mirrors the same section navigation rhythm (`Overview / Devices / Credentials / Security / Maintenance / About`) for cross-surface consistency.
+- Both manager shells now include release-update checks against GitHub Releases with separate manager/firmware stable-preview enrollment tracks.
 - Hardened builds now default to requiring short-lived manager authorization for credential-summary reads; debug builds keep read-path friction lower for bring-up.
 - The optional simulated secure-element mode adds software-only secret wrapping semantics for credential secrets; it does **not** create a hardware secure-element boundary.
 - `clientPIN` currently implements the older `getPinToken` flow, not permission-scoped tokens.

@@ -15,6 +15,9 @@ MeowKey Manager is the current Linux-facing native manager shell and maintenance
 - delete one credential by slot on formal channel (`0x06`)
 - write user-presence config on formal channel (`0x07` / `0x08`)
 - clear formal user-presence session override (`0x09`)
+- check manager/firmware updates from GitHub Releases
+- enroll separately into manager/firmware `stable` or `preview` tracks
+- use WinUI-aligned section navigation (`Overview / Devices / Credentials / Security / Maintenance / About`)
 - `CTAPHID_INIT`
 - `authenticatorGetInfo`
 - `authenticatorMakeCredential`
