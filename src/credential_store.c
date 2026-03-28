@@ -56,6 +56,7 @@ enum {
     MEOWKEY_SIGN_COUNT_JOURNAL_VERSION = 2u,
     MEOWKEY_SIGN_COUNT_LEGACY_JOURNAL_VERSION = 1u,
     MEOWKEY_SIGN_COUNT_ENTRY_MAGIC = 0x53434e54u,
+    MEOWKEY_STORE_SLOT_FLAG_SIMULATED_SE_WRAPPED = 0x01u,
 };
 
 typedef struct {
@@ -644,25 +645,110 @@ static void store_copy_current_slots(const meowkey_store_slot_t *slots, size_t s
     s_store.data.fixed.credential_count = (uint32_t)imported;
 }
 
+static bool store_sim_se_xor_field(const uint8_t *credential_id,
+                                   size_t credential_id_length,
+                                   const char *label,
+                                   uint8_t *field,
+                                   size_t field_length) {
+    uint8_t context[96];
+    uint8_t mask[32];
+    const uint8_t *unique_id;
+    size_t unique_id_length = 0u;
+    size_t label_length;
+    size_t base_length;
+    size_t offset = 0u;
+    uint32_t counter = 0u;
+
+    if (credential_id == NULL || credential_id_length == 0u || label == NULL || field == NULL) {
+        return false;
+    }
+
+    label_length = strlen(label);
+    if ((label_length + credential_id_length + 4u) > sizeof(context)) {
+        return false;
+    }
+
+    unique_id = store_unique_board_id_bytes(&unique_id_length);
+    memcpy(context, label, label_length);
+    memcpy(&context[label_length], credential_id, credential_id_length);
+    base_length = label_length + credential_id_length;
+
+    while (offset < field_length) {
+        size_t chunk = (field_length - offset) < sizeof(mask) ? (field_length - offset) : sizeof(mask);
+        context[base_length] = (uint8_t)(counter & 0xffu);
+        context[base_length + 1u] = (uint8_t)((counter >> 8u) & 0xffu);
+        context[base_length + 2u] = (uint8_t)((counter >> 16u) & 0xffu);
+        context[base_length + 3u] = (uint8_t)((counter >> 24u) & 0xffu);
+        if (!store_hmac_sha256(unique_id, unique_id_length, context, base_length + 4u, mask)) {
+            store_secure_zero(context, sizeof(context));
+            store_secure_zero(mask, sizeof(mask));
+            return false;
+        }
+
+        for (size_t index = 0u; index < chunk; ++index) {
+            field[offset + index] ^= mask[index];
+        }
+        offset += chunk;
+        counter += 1u;
+    }
+
+    store_secure_zero(context, sizeof(context));
+    store_secure_zero(mask, sizeof(mask));
+    return true;
+}
+
+static bool store_sim_se_transform_slot_secrets(meowkey_store_slot_t *slot) {
+    if (slot == NULL) {
+        return false;
+    }
+
+    return store_sim_se_xor_field(slot->credential_id,
+                                  slot->credential_id_length,
+                                  "meowkey-sim-se/private-key",
+                                  slot->private_key,
+                                  sizeof(slot->private_key)) &&
+           store_sim_se_xor_field(slot->credential_id,
+                                  slot->credential_id_length,
+                                  "meowkey-sim-se/cred-random-uv",
+                                  slot->cred_random_with_uv,
+                                  sizeof(slot->cred_random_with_uv)) &&
+           store_sim_se_xor_field(slot->credential_id,
+                                  slot->credential_id_length,
+                                  "meowkey-sim-se/cred-random-no-uv",
+                                  slot->cred_random_without_uv,
+                                  sizeof(slot->cred_random_without_uv));
+}
+
 static void store_copy_slot_to_record(const meowkey_store_slot_t *slot, meowkey_credential_record_t *record) {
+    meowkey_store_slot_t scratch;
+
     memset(record, 0, sizeof(*record));
-    record->sign_count = slot->sign_count;
-    record->discoverable = slot->discoverable != 0u;
-    record->cred_random_ready = slot->cred_random_ready != 0u;
-    record->credential_id_length = slot->credential_id_length;
-    record->private_key_length = slot->private_key_length;
-    record->rp_id_length = slot->rp_id_length;
-    record->user_id_length = slot->user_id_length;
-    record->user_name_length = slot->user_name_length;
-    record->display_name_length = slot->display_name_length;
-    memcpy(record->credential_id, slot->credential_id, sizeof(record->credential_id));
-    memcpy(record->private_key, slot->private_key, sizeof(record->private_key));
-    memcpy(record->cred_random_with_uv, slot->cred_random_with_uv, sizeof(record->cred_random_with_uv));
-    memcpy(record->cred_random_without_uv, slot->cred_random_without_uv, sizeof(record->cred_random_without_uv));
-    memcpy(record->rp_id, slot->rp_id, sizeof(record->rp_id));
-    memcpy(record->user_id, slot->user_id, sizeof(record->user_id));
-    memcpy(record->user_name, slot->user_name, sizeof(record->user_name));
-    memcpy(record->display_name, slot->display_name, sizeof(record->display_name));
+    scratch = *slot;
+    if ((scratch.reserved[0] & MEOWKEY_STORE_SLOT_FLAG_SIMULATED_SE_WRAPPED) != 0u) {
+        if (!store_sim_se_transform_slot_secrets(&scratch)) {
+            store_secure_zero(&scratch, sizeof(scratch));
+            return;
+        }
+    }
+
+    record->sign_count = scratch.sign_count;
+    record->discoverable = scratch.discoverable != 0u;
+    record->cred_random_ready = scratch.cred_random_ready != 0u;
+    record->credential_id_length = scratch.credential_id_length;
+    record->private_key_length = scratch.private_key_length;
+    record->rp_id_length = scratch.rp_id_length;
+    record->user_id_length = scratch.user_id_length;
+    record->user_name_length = scratch.user_name_length;
+    record->display_name_length = scratch.display_name_length;
+    memcpy(record->credential_id, scratch.credential_id, sizeof(record->credential_id));
+    memcpy(record->private_key, scratch.private_key, sizeof(record->private_key));
+    memcpy(record->cred_random_with_uv, scratch.cred_random_with_uv, sizeof(record->cred_random_with_uv));
+    memcpy(record->cred_random_without_uv, scratch.cred_random_without_uv, sizeof(record->cred_random_without_uv));
+    memcpy(record->rp_id, scratch.rp_id, sizeof(record->rp_id));
+    memcpy(record->user_id, scratch.user_id, sizeof(record->user_id));
+    memcpy(record->user_name, scratch.user_name, sizeof(record->user_name));
+    memcpy(record->display_name, scratch.display_name, sizeof(record->display_name));
+    store_secure_zero(&scratch, sizeof(scratch));
 }
 
 static void store_copy_record_to_slot(const meowkey_credential_record_t *record, meowkey_store_slot_t *slot) {
@@ -685,6 +771,12 @@ static void store_copy_record_to_slot(const meowkey_credential_record_t *record,
     memcpy(slot->user_id, record->user_id, sizeof(slot->user_id));
     memcpy(slot->user_name, record->user_name, sizeof(slot->user_name));
     memcpy(slot->display_name, record->display_name, sizeof(slot->display_name));
+
+#if MEOWKEY_ENABLE_SIMULATED_SECURE_ELEMENT
+    if (store_sim_se_transform_slot_secrets(slot)) {
+        slot->reserved[0] |= MEOWKEY_STORE_SLOT_FLAG_SIMULATED_SE_WRAPPED;
+    }
+#endif
 }
 
 static void store_copy_v2_slot_to_slot(const meowkey_store_slot_v2_t *source, meowkey_store_slot_t *target) {
@@ -1323,6 +1415,32 @@ bool meowkey_store_update_sign_count(uint32_t slot_index, uint32_t sign_count) {
         s_store.data.slots[slot_index].sign_count = previous_sign_count;
         return false;
     }
+    return true;
+}
+
+bool meowkey_store_delete_credential_by_slot(uint32_t slot_index) {
+    meowkey_store_slot_t previous_slot;
+    uint32_t previous_count;
+
+    store_load_if_needed();
+    if (slot_index >= MEOWKEY_STORE_MAX_CREDENTIALS || !store_slot_is_valid(&s_store.data.slots[slot_index])) {
+        return false;
+    }
+
+    previous_slot = s_store.data.slots[slot_index];
+    previous_count = s_store.data.fixed.credential_count;
+
+    memset(&s_store.data.slots[slot_index], 0, sizeof(s_store.data.slots[slot_index]));
+    if (s_store.data.fixed.credential_count > 0u) {
+        s_store.data.fixed.credential_count -= 1u;
+    }
+
+    if (!store_commit_transaction()) {
+        s_store.data.slots[slot_index] = previous_slot;
+        s_store.data.fixed.credential_count = previous_count;
+        return false;
+    }
+
     return true;
 }
 

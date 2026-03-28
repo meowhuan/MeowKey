@@ -42,6 +42,9 @@ param(
     [string]$VersionLabel = "dev",
     [switch]$EnableSignedBoot,
     [switch]$EnableAntiRollback,
+    [switch]$EnableSimulatedSecureElement = $true,
+    [ValidateSet("auto", "on", "off")]
+    [string]$ManagerSummaryAuth = "auto",
     [string]$SecureBootSigningKey = "",
     [string]$SecureBootOtpOutputPath = "",
     [string]$AntiRollbackRows = "0xc0;0xc3;0xc6;0xc9;0xcc;0xcf;0xd2;0xd5;0xd8;0xdb;0xde;0xe1",
@@ -347,8 +350,13 @@ $cmakeArgs = @(
     "-DMEOWKEY_VERSION_MAJOR=$VersionMajor",
     "-DMEOWKEY_VERSION_MINOR=$VersionMinor",
     "-DMEOWKEY_VERSION_PATCH=$VersionPatch",
-    "-DMEOWKEY_VERSION_LABEL=$VersionLabel"
+    "-DMEOWKEY_VERSION_LABEL=$VersionLabel",
+    "-DMEOWKEY_ENABLE_SIMULATED_SECURE_ELEMENT=$(if ($EnableSimulatedSecureElement) { 'ON' } else { 'OFF' })"
 )
+
+if ($ManagerSummaryAuth -ne "auto") {
+    $cmakeArgs += "-DMEOWKEY_MANAGER_REQUIRE_AUTH_FOR_SUMMARIES=$(if ($ManagerSummaryAuth -eq 'on') { 'ON' } else { 'OFF' })"
+}
 
 if ($EnableSignedBoot) {
     $cmakeArgs += @(

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using MeowKey.Manager.Models;
@@ -9,12 +10,15 @@ namespace MeowKey.Manager.Pages;
 public sealed partial class CredentialsPage : Page
 {
     private readonly LocalizationService _localizer = LocalizationService.Current;
+    private readonly DispatcherTimer _authorizationTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
     public CredentialsPage()
     {
         InitializeComponent();
         ApplyLocalization();
         Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
+        _authorizationTimer.Tick += (_, _) => UpdateAuthorizationCountdown();
     }
 
     public ManagerSnapshot Snapshot => ((App)Application.Current).Repository.Snapshot;
@@ -28,7 +32,13 @@ public sealed partial class CredentialsPage : Page
         TypeFilterCombo.SelectedIndex = 0;
         HealthFilterCombo.SelectedIndex = 0;
         SortCombo.SelectedIndex = 0;
+        _authorizationTimer.Start();
         RefreshCatalogView();
+    }
+
+    private void OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        _authorizationTimer.Stop();
     }
 
     private void OnRefreshCatalog(object sender, RoutedEventArgs e)
@@ -38,9 +48,36 @@ public sealed partial class CredentialsPage : Page
         Frame.Navigate(typeof(CredentialsPage));
     }
 
-    private void OnPlanSingleDelete(object sender, RoutedEventArgs e)
+    private async void OnDeleteBySlot(object sender, RoutedEventArgs e)
     {
-        Repository.RecordAction("Activity.Category.credentials", "Action.Credentials.PlanDelete");
+        var slotTextBox = new TextBox
+        {
+            PlaceholderText = _localizer["Page.Credentials.DeleteBySlot.Placeholder"]
+        };
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = _localizer["Page.Credentials.DeleteBySlot.Title"],
+            PrimaryButtonText = _localizer["Page.Credentials.Action.Delete"],
+            CloseButtonText = _localizer["Dialog.Close"],
+            DefaultButton = ContentDialogButton.Primary,
+            Content = slotTextBox
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        if (!int.TryParse(slotTextBox.Text?.Trim(), out var slot))
+        {
+            await ShowMessageAsync(_localizer["Page.Credentials.Delete.FailedTitle"], _localizer["Page.Credentials.DeleteBySlot.Invalid"]);
+            return;
+        }
+
+        await DeleteCredentialAsync(slot);
     }
 
     private void OnSearchTextChanged(object sender, TextChangedEventArgs e)
@@ -90,6 +127,31 @@ public sealed partial class CredentialsPage : Page
         await dialog.ShowAsync();
     }
 
+    private async void OnDeleteCredential(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: CredentialCatalogItem item })
+        {
+            return;
+        }
+
+        var confirmDialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = _localizer["Page.Credentials.Delete.ConfirmTitle"],
+            Content = string.Format(_localizer["Page.Credentials.Delete.ConfirmBody"], item.Slot, item.Title, item.Subtitle),
+            PrimaryButtonText = _localizer["Page.Credentials.Action.Delete"],
+            CloseButtonText = _localizer["Dialog.Close"],
+            DefaultButton = ContentDialogButton.Close
+        };
+
+        if (await confirmDialog.ShowAsync() != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        await DeleteCredentialAsync(item.Slot);
+    }
+
     private FrameworkElement BuildDetailRow(string label, string value)
     {
         var panel = new StackPanel
@@ -113,6 +175,32 @@ public sealed partial class CredentialsPage : Page
     {
         var value = string.IsNullOrWhiteSpace(preview) ? _localizer["Security.Value.Unavailable"] : preview;
         return $"{value} ({declaredLength})";
+    }
+
+    private async Task DeleteCredentialAsync(int slot)
+    {
+        if (Repository.DeleteCredentialFromSelectedDevice(slot, out var error))
+        {
+            Repository.RecordAction("Activity.Category.credentials", "Action.Credentials.Delete");
+            Frame.Navigate(typeof(CredentialsPage));
+            return;
+        }
+
+        await ShowMessageAsync(_localizer["Page.Credentials.Delete.FailedTitle"],
+                               string.IsNullOrWhiteSpace(error) ? _localizer["Page.Credentials.Delete.FailedMessage"] : error!);
+    }
+
+    private async Task ShowMessageAsync(string title, string message)
+    {
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = title,
+            Content = message,
+            CloseButtonText = _localizer["Dialog.Close"]
+        };
+
+        await dialog.ShowAsync();
     }
 
     private void RefreshCatalogView()
@@ -158,6 +246,7 @@ public sealed partial class CredentialsPage : Page
         }
 
         UpdateCatalogLayout(selectedDevice, totalCount, FilteredCatalog.Count);
+        UpdateAuthorizationCountdown();
     }
 
     private void UpdateCatalogLayout(ConnectedDeviceInfo? selectedDevice, int totalCount, int filteredCount)
@@ -227,12 +316,36 @@ public sealed partial class CredentialsPage : Page
         CatalogEmptyCard.Visibility = Visibility.Visible;
     }
 
+    private void UpdateAuthorizationCountdown()
+    {
+        var device = Snapshot.SelectedDevice;
+        if (device is null)
+        {
+            AuthorizationCountdownText.Text = _localizer["Page.Credentials.AuthCountdown.NoDevice"];
+            return;
+        }
+
+        var remainingMs = device.ManagerAuthorizationExpiresAtUnixMs - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!device.ManagerAuthorizationActive || remainingMs <= 0)
+        {
+            AuthorizationCountdownText.Text = _localizer["Page.Credentials.AuthCountdown.Inactive"];
+            return;
+        }
+
+        var remainingSeconds = (remainingMs + 999L) / 1000L;
+        AuthorizationCountdownText.Text = string.Format(
+            _localizer["Page.Credentials.AuthCountdown.Active"],
+            remainingSeconds,
+            device.ManagerAuthorizationPermissions);
+    }
+
     private void ApplyLocalization()
     {
         PageTitleText.Text = _localizer["Page.Credentials.Title"];
         PageDescriptionText.Text = _localizer["Page.Credentials.Description"];
+        AuthorizationCountdownText.Text = _localizer["Page.Credentials.AuthCountdown.Inactive"];
         RefreshCatalogButton.Content = _localizer["Page.Credentials.Action.Refresh"];
-        PlanSingleDeleteButton.Content = _localizer["Page.Credentials.Action.PlanDelete"];
+        DeleteBySlotButton.Content = _localizer["Page.Credentials.Action.DeleteBySlot"];
         CatalogTitleText.Text = _localizer["Page.Credentials.CatalogTitle"];
         CatalogDescriptionText.Text = _localizer["Page.Credentials.CatalogDescription"];
         SearchLabelText.Text = _localizer["Page.Credentials.Filter.Search"];

@@ -75,6 +75,8 @@ public sealed class ConnectedDeviceInfo
     public string BuildFlavor { get; init; } = string.Empty;
     public string FirmwareVersion { get; init; } = string.Empty;
     public bool DebugHidEnabled { get; init; }
+    public bool SimulatedSecureElementEnabled { get; init; }
+    public bool CredentialSummariesRequireAuth { get; init; }
     public bool SignedBootEnabled { get; init; }
     public bool AntiRollbackEnabled { get; init; }
     public bool BoardDetected { get; init; }
@@ -100,6 +102,9 @@ public sealed class ConnectedDeviceInfo
     public int AntiRollbackVersion { get; init; }
     public bool CredentialCatalogAvailable { get; init; }
     public IReadOnlyList<CredentialSummaryInfo> CredentialCatalog { get; init; } = Array.Empty<CredentialSummaryInfo>();
+    public bool ManagerAuthorizationActive { get; init; }
+    public long ManagerAuthorizationExpiresAtUnixMs { get; init; }
+    public int ManagerAuthorizationPermissions { get; init; }
     public bool SecurityStateAvailable { get; init; }
     public SecurityStateInfo? SecurityState { get; init; }
 }

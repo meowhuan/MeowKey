@@ -63,6 +63,93 @@ public sealed class ManagerRepository
         SnapshotChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    public bool DeleteCredentialFromSelectedDevice(int slot, out string? error)
+    {
+        var device = ResolveSelectedDevice(_devices);
+        if (device is null || string.IsNullOrWhiteSpace(device.DevicePath))
+        {
+            error = _localizer["Page.Credentials.Error.NoDevice"];
+            return false;
+        }
+        if (device.DebugHidEnabled)
+        {
+            error = _localizer["Manager.Policy.HardenedRequired"];
+            return false;
+        }
+
+        try
+        {
+            _deviceService.DeleteCredential(device.DevicePath, slot);
+            Refresh();
+            error = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            ActivityEntries.Insert(0, new ActivityEntry(DateTime.Now, _localizer["Activity.Category.credentials"], ex.Message));
+            return false;
+        }
+    }
+
+    public bool ApplyUserPresenceConfig(UserPresenceConfigInfo config, bool persisted, out string? error)
+    {
+        var device = ResolveSelectedDevice(_devices);
+        if (device is null || string.IsNullOrWhiteSpace(device.DevicePath))
+        {
+            error = _localizer["Page.Security.Error.NoDevice"];
+            return false;
+        }
+        if (device.DebugHidEnabled)
+        {
+            error = _localizer["Manager.Policy.HardenedRequired"];
+            return false;
+        }
+
+        try
+        {
+            _deviceService.SetUserPresenceConfig(device.DevicePath, config, persisted);
+            Refresh();
+            error = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            ActivityEntries.Insert(0, new ActivityEntry(DateTime.Now, _localizer["Activity.Category.security"], ex.Message));
+            return false;
+        }
+    }
+
+    public bool ClearUserPresenceSessionOverride(out string? error)
+    {
+        var device = ResolveSelectedDevice(_devices);
+        if (device is null || string.IsNullOrWhiteSpace(device.DevicePath))
+        {
+            error = _localizer["Page.Security.Error.NoDevice"];
+            return false;
+        }
+        if (device.DebugHidEnabled)
+        {
+            error = _localizer["Manager.Policy.HardenedRequired"];
+            return false;
+        }
+
+        try
+        {
+            _deviceService.ClearUserPresenceSessionOverride(device.DevicePath);
+            Refresh();
+            error = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            ActivityEntries.Insert(0, new ActivityEntry(DateTime.Now, _localizer["Activity.Category.security"], ex.Message));
+            return false;
+        }
+    }
+
     private ActivityEntry CreateActivityEntry(DateTime timestamp, string categoryKey, string messageKey)
     {
         return new ActivityEntry(timestamp, _localizer[categoryKey], _localizer[messageKey]);
@@ -251,7 +338,8 @@ public sealed class ManagerRepository
             [
                 new InfoItem(t["Credentials.Catalog.FactStatus"], t["Summary.Value.Unknown"]),
                 new InfoItem(t["Credentials.Catalog.FactEntries"], t["Summary.Value.Unknown"]),
-                new InfoItem(t["Credentials.Catalog.FactStore"], t["Summary.Value.Unknown"])
+                new InfoItem(t["Credentials.Catalog.FactStore"], t["Summary.Value.Unknown"]),
+                new InfoItem(t["Credentials.Catalog.FactAuth"], t["Summary.Value.Unknown"])
             ];
         }
 
@@ -265,12 +353,21 @@ public sealed class ManagerRepository
             : device.CredentialCatalog.Count == 0
                 ? t["Credentials.Catalog.DetailEmpty"]
                 : t["Credentials.Catalog.DetailReady"];
+        var remainingSeconds = Math.Max(0L,
+            (device.ManagerAuthorizationExpiresAtUnixMs - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 999L) / 1000L);
+        var authValue = device.ManagerAuthorizationActive && remainingSeconds > 0
+            ? t["Credentials.Catalog.AuthActive"]
+            : t["Credentials.Catalog.AuthInactive"];
+        var authDetail = device.ManagerAuthorizationActive && remainingSeconds > 0
+            ? string.Format(t["Credentials.Catalog.AuthActiveDetail"], remainingSeconds, device.ManagerAuthorizationPermissions)
+            : t["Credentials.Catalog.AuthInactiveDetail"];
 
         return
         [
             new InfoItem(t["Credentials.Catalog.FactStatus"], status, detail),
             new InfoItem(t["Credentials.Catalog.FactEntries"], $"{device.CredentialCatalog.Count}/{device.CredentialCount}", $"{device.CredentialCount}/{device.CredentialCapacity}"),
-            new InfoItem(t["Credentials.Catalog.FactStore"], $"v{device.StoreFormatVersion}", device.Transport)
+            new InfoItem(t["Credentials.Catalog.FactStore"], $"v{device.StoreFormatVersion}", device.Transport),
+            new InfoItem(t["Credentials.Catalog.FactAuth"], authValue, authDetail)
         ];
     }
 
@@ -319,7 +416,8 @@ public sealed class ManagerRepository
                     item.UserNameLength,
                     item.DisplayNamePreview,
                     item.DisplayNameLength,
-                    t["Page.Credentials.Action.ViewDetails"]);
+                    t["Page.Credentials.Action.ViewDetails"],
+                    t["Page.Credentials.Action.Delete"]);
             })
             .ToArray();
     }
@@ -331,12 +429,13 @@ public sealed class ManagerRepository
             : !device.CredentialCatalogAvailable
                 ? t["Credentials.Catalog.StatusUnavailable"]
                 : $"{device.CredentialCatalog.Count}/{device.CredentialCapacity}";
+        var canUseManagedWrites = device?.ManagementAvailable == true;
 
         return
         [
             new CapabilityItem(t["Credentials.Capability1.Name"], countText, t["Credentials.Capability1.Detail"]),
-            new CapabilityItem(t["Credentials.Capability2.Name"], t["Credentials.Capability2.Status"], t["Credentials.Capability2.Detail"]),
-            new CapabilityItem(t["Credentials.Capability3.Name"], t["Credentials.Capability3.Status"], t["Credentials.Capability3.Detail"]),
+            new CapabilityItem(t["Credentials.Capability2.Name"], canUseManagedWrites ? t["Credentials.Capability2.StatusReady"] : t["Credentials.Capability2.Status"], t["Credentials.Capability2.Detail"]),
+            new CapabilityItem(t["Credentials.Capability3.Name"], canUseManagedWrites ? t["Credentials.Capability3.StatusReady"] : t["Credentials.Capability3.Status"], t["Credentials.Capability3.Detail"]),
             new CapabilityItem(t["Credentials.Capability4.Name"], device?.DebugHidEnabled == true ? t["Credentials.Capability4.Status"] : t["Credentials.Capability4.StatusLimited"], t["Credentials.Capability4.Detail"])
         ];
     }
@@ -379,7 +478,8 @@ public sealed class ManagerRepository
         [
             $"{t["Security.Label.Management"]}: {BoolLabel(device.ManagementAvailable, t)}",
             $"{t["Security.Label.FidoHid"]}: {BoolLabel(device.FidoHidAvailable, t)}",
-            $"{t["Security.Label.CtapConfigured"]}: {BoolLabel(security?.CtapConfigured ?? device.CtapConfigured, t)}"
+            $"{t["Security.Label.CtapConfigured"]}: {BoolLabel(security?.CtapConfigured ?? device.CtapConfigured, t)}",
+            $"{t["Security.Label.SimulatedSecureElement"]}: {BoolLabel(device.SimulatedSecureElementEnabled, t)}"
         ]);
         var flags0Value = bootFlags0?.Available == true ? bootFlags0.Raw : t["Security.Value.Unavailable"];
         var flags0Detail = bootFlags0?.Available == true

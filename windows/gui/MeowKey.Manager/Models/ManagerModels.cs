@@ -123,7 +123,8 @@ public sealed class CredentialCatalogItem
                                  int userNameLength,
                                  string displayNamePreview,
                                  int displayNameLength,
-                                 string detailsLabel)
+                                 string detailsLabel,
+                                 string deleteLabel)
     {
         Title = title;
         Subtitle = subtitle;
@@ -142,6 +143,7 @@ public sealed class CredentialCatalogItem
         DisplayNamePreview = displayNamePreview;
         DisplayNameLength = displayNameLength;
         DetailsLabel = detailsLabel;
+        DeleteLabel = deleteLabel;
     }
 
     public string Title { get; }
@@ -161,6 +163,7 @@ public sealed class CredentialCatalogItem
     public string DisplayNamePreview { get; }
     public int DisplayNameLength { get; }
     public string DetailsLabel { get; }
+    public string DeleteLabel { get; }
 }
 
 public sealed class UserPresenceSection

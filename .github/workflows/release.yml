@@ -54,6 +54,9 @@ jobs:
         run: |
           git clone --branch 2.2.0 --depth 1 --recurse-submodules --shallow-submodules https://github.com/raspberrypi/pico-sdk.git "${PICO_SDK_CI_PATH}"
 
+      - name: Validate manager-channel contract
+        run: python3 scripts/verify-manager-contract.py
+
       - name: Materialize optional secure boot signing key
         env:
           MEOWKEY_SECUREBOOT_PEM_B64: ${{ secrets.MEOWKEY_SECUREBOOT_PEM_B64 }}

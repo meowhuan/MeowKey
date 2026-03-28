@@ -10,12 +10,24 @@ public sealed class ManagerDeviceService
     private const byte GetSnapshotCommand = 0x01;
     private const byte GetCredentialSummariesCommand = 0x03;
     private const byte GetSecurityStateCommand = 0x04;
+    private const byte AuthorizeCommand = 0x05;
+    private const byte DeleteCredentialCommand = 0x06;
+    private const byte SetUserPresencePersistedCommand = 0x07;
+    private const byte SetUserPresenceSessionCommand = 0x08;
+    private const byte ClearUserPresenceSessionCommand = 0x09;
     private const ushort CredentialPageLimit = 16;
+    private const ushort CredentialReadPermission = 0x0004;
+    private const ushort CredentialWritePermission = 0x0001;
+    private const ushort UserPresenceWritePermission = 0x0002;
+    private const int AuthTokenBytes = 16;
+    private const int UserPresencePayloadBytes = 8;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
     };
+
+    private readonly Dictionary<string, AuthorizationCacheEntry> _authorizationCache = new(StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlyList<ConnectedDeviceInfo> EnumerateDevices()
     {
@@ -29,6 +41,7 @@ public sealed class ManagerDeviceService
                     ?? throw new InvalidOperationException("Manager snapshot payload could not be parsed.");
                 var credentialCatalog = TryReadCredentialCatalog(devicePath, out var credentialCatalogAvailable);
                 var securityState = TryReadSecurityState(devicePath, out var securityStateAvailable);
+                var authState = GetAuthorizationState(devicePath);
 
                 devices.Add(new ConnectedDeviceInfo
                 {
@@ -40,6 +53,8 @@ public sealed class ManagerDeviceService
                     BuildFlavor = snapshot.Build?.Flavor ?? "unknown",
                     FirmwareVersion = snapshot.Build?.Version ?? "unknown",
                     DebugHidEnabled = snapshot.Build?.DebugHidEnabled ?? false,
+                    SimulatedSecureElementEnabled = snapshot.Build?.SimulatedSecureElementEnabled ?? false,
+                    CredentialSummariesRequireAuth = snapshot.Build?.CredentialSummariesRequireAuth ?? false,
                     SignedBootEnabled = snapshot.Build?.SignedBootEnabled ?? false,
                     AntiRollbackEnabled = snapshot.Build?.AntiRollbackEnabled ?? false,
                     AntiRollbackVersion = snapshot.Build?.AntiRollbackVersion ?? 0,
@@ -65,6 +80,9 @@ public sealed class ManagerDeviceService
                     Transport = snapshot.Transport ?? "winusb-bulk-v1",
                     CredentialCatalogAvailable = credentialCatalogAvailable,
                     CredentialCatalog = credentialCatalog,
+                    ManagerAuthorizationActive = authState.Active,
+                    ManagerAuthorizationExpiresAtUnixMs = authState.ExpiresAtUnixMs,
+                    ManagerAuthorizationPermissions = authState.Permissions,
                     SecurityStateAvailable = securityStateAvailable,
                     SecurityState = securityState
                 });
@@ -78,24 +96,109 @@ public sealed class ManagerDeviceService
         return devices;
     }
 
+    public void DeleteCredential(string devicePath, int slot)
+    {
+        if (slot < 0 || slot > ushort.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(slot), "Slot index is out of protocol range.");
+        }
+
+        var token = EnsureAuthorizationToken(devicePath, CredentialWritePermission);
+        var payload = new byte[AuthTokenBytes + sizeof(ushort)];
+        token.CopyTo(payload.AsSpan(0, AuthTokenBytes));
+        BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(AuthTokenBytes, sizeof(ushort)), (ushort)slot);
+
+        try
+        {
+            var response = ReadJson<DeleteCredentialResponse>(devicePath, DeleteCredentialCommand, payload)
+                ?? throw new InvalidOperationException("Delete credential response could not be parsed.");
+            if (!response.Deleted)
+            {
+                throw new InvalidOperationException("Device rejected per-credential delete.");
+            }
+        }
+        catch
+        {
+            _authorizationCache.Remove(devicePath);
+            throw;
+        }
+    }
+
+    public void SetUserPresenceConfig(string devicePath, UserPresenceConfigInfo config, bool persisted)
+    {
+        var normalized = NormalizeUserPresenceConfig(config);
+        var token = EnsureAuthorizationToken(devicePath, UserPresenceWritePermission);
+        var payload = BuildUserPresencePayload(token, normalized);
+        var command = persisted ? SetUserPresencePersistedCommand : SetUserPresenceSessionCommand;
+
+        try
+        {
+            var response = ReadJson<UserPresenceWriteResponse>(devicePath, command, payload)
+                ?? throw new InvalidOperationException("User-presence write response could not be parsed.");
+            if (!response.Updated)
+            {
+                throw new InvalidOperationException("Device rejected user-presence update.");
+            }
+        }
+        catch
+        {
+            _authorizationCache.Remove(devicePath);
+            throw;
+        }
+    }
+
+    public void ClearUserPresenceSessionOverride(string devicePath)
+    {
+        var token = EnsureAuthorizationToken(devicePath, UserPresenceWritePermission);
+        var payload = new byte[AuthTokenBytes];
+        token.CopyTo(payload.AsSpan());
+
+        try
+        {
+            var response = ReadJson<UserPresenceWriteResponse>(devicePath, ClearUserPresenceSessionCommand, payload)
+                ?? throw new InvalidOperationException("User-presence clear response could not be parsed.");
+            if (!response.Updated)
+            {
+                throw new InvalidOperationException("Device rejected session-override clear.");
+            }
+        }
+        catch
+        {
+            _authorizationCache.Remove(devicePath);
+            throw;
+        }
+    }
+
     private static T? ReadJson<T>(string devicePath, byte command, ReadOnlySpan<byte> payload)
     {
         var json = WinUsbManagerTransport.SendCommand(devicePath, command, payload);
         return JsonSerializer.Deserialize<T>(json, JsonOptions);
     }
 
-    private static IReadOnlyList<CredentialSummaryInfo> TryReadCredentialCatalog(string devicePath, out bool available)
+    private IReadOnlyList<CredentialSummaryInfo> TryReadCredentialCatalog(string devicePath, out bool available)
     {
         var items = new List<CredentialSummaryInfo>();
         ushort cursor = 0;
+        byte[]? authorizationToken = null;
 
         try
         {
             while (true)
             {
-                var payload = BuildCredentialCatalogPayload(cursor, CredentialPageLimit);
-                var page = ReadJson<CredentialCatalogResponse>(devicePath, GetCredentialSummariesCommand, payload)
-                    ?? throw new InvalidOperationException("Credential catalog payload could not be parsed.");
+                CredentialCatalogResponse page;
+                var payload = BuildCredentialCatalogPayload(cursor, CredentialPageLimit, authorizationToken);
+                try
+                {
+                    page = ReadJson<CredentialCatalogResponse>(devicePath, GetCredentialSummariesCommand, payload)
+                        ?? throw new InvalidOperationException("Credential catalog payload could not be parsed.");
+                }
+                catch (InvalidOperationException ex) when (ex.Message.Contains("status 0x04", StringComparison.OrdinalIgnoreCase))
+                {
+                    authorizationToken = EnsureAuthorizationToken(devicePath, CredentialReadPermission);
+                    payload = BuildCredentialCatalogPayload(cursor, CredentialPageLimit, authorizationToken);
+                    page = ReadJson<CredentialCatalogResponse>(devicePath, GetCredentialSummariesCommand, payload)
+                        ?? throw new InvalidOperationException("Credential catalog payload could not be parsed.");
+                }
 
                 if (page.Items is not null)
                 {
@@ -139,11 +242,165 @@ public sealed class ManagerDeviceService
         }
     }
 
-    private static byte[] BuildCredentialCatalogPayload(ushort cursor, ushort limit)
+    private static byte[] BuildCredentialCatalogPayload(ushort cursor, ushort limit, byte[]? authToken)
     {
-        var payload = new byte[4];
+        var payload = authToken is { Length: AuthTokenBytes }
+            ? new byte[AuthTokenBytes + 4]
+            : new byte[4];
+        if (authToken is { Length: AuthTokenBytes })
+        {
+            authToken.CopyTo(payload.AsSpan(0, AuthTokenBytes));
+            BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(AuthTokenBytes, 2), cursor);
+            BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(AuthTokenBytes + 2, 2), limit);
+            return payload;
+        }
+
         BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(0, 2), cursor);
         BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(2, 2), limit);
+        return payload;
+    }
+
+    private AuthorizationStateView GetAuthorizationState(string devicePath)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (!_authorizationCache.TryGetValue(devicePath, out var cached))
+        {
+            return AuthorizationStateView.Empty;
+        }
+
+        if (cached.ExpiresAt <= now)
+        {
+            _authorizationCache.Remove(devicePath);
+            return AuthorizationStateView.Empty;
+        }
+
+        return new AuthorizationStateView
+        {
+            Active = true,
+            ExpiresAtUnixMs = cached.ExpiresAt.ToUnixTimeMilliseconds(),
+            Permissions = cached.Permissions
+        };
+    }
+
+    private byte[] EnsureAuthorizationToken(string devicePath, ushort permissions)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (_authorizationCache.TryGetValue(devicePath, out var cached) &&
+            cached.ExpiresAt > now &&
+            (cached.Permissions & permissions) == permissions)
+        {
+            return cached.Token;
+        }
+
+        var payload = new byte[sizeof(ushort)];
+        BinaryPrimitives.WriteUInt16LittleEndian(payload, permissions);
+        var response = ReadJson<AuthorizationResponse>(devicePath, AuthorizeCommand, payload)
+            ?? throw new InvalidOperationException("Authorization response could not be parsed.");
+        if (!response.Authorized)
+        {
+            throw new InvalidOperationException("Device authorization was rejected.");
+        }
+
+        var token = ParseAuthToken(response.Token);
+        var ttlMs = response.TtlMs > 0 ? response.TtlMs : 30000;
+        var grantedPermissions = response.Permissions > 0 ? response.Permissions : permissions;
+        if (grantedPermissions < 0 || grantedPermissions > ushort.MaxValue)
+        {
+            throw new InvalidOperationException("Authorization permissions are out of range.");
+        }
+
+        _authorizationCache[devicePath] = new AuthorizationCacheEntry
+        {
+            Token = token,
+            Permissions = (ushort)grantedPermissions,
+            ExpiresAt = now.AddMilliseconds(ttlMs)
+        };
+
+        return token;
+    }
+
+    private static byte[] ParseAuthToken(string? tokenHex)
+    {
+        if (string.IsNullOrWhiteSpace(tokenHex))
+        {
+            throw new InvalidOperationException("Authorization token is empty.");
+        }
+
+        if (tokenHex.Length != (AuthTokenBytes * 2))
+        {
+            throw new InvalidOperationException("Authorization token length is invalid.");
+        }
+
+        var token = new byte[AuthTokenBytes];
+        for (var i = 0; i < AuthTokenBytes; i++)
+        {
+            token[i] = Convert.ToByte(tokenHex.Substring(i * 2, 2), 16);
+        }
+        return token;
+    }
+
+    private static UserPresenceConfigInfo NormalizeUserPresenceConfig(UserPresenceConfigInfo config)
+    {
+        var source = (config.Source ?? string.Empty).Trim().ToLowerInvariant();
+        if (source is not ("none" or "bootsel" or "gpio"))
+        {
+            throw new InvalidOperationException($"Unsupported user-presence source: {config.Source}");
+        }
+
+        if (config.TapCount < 1 || config.TapCount > 4)
+        {
+            throw new InvalidOperationException("tapCount must be within [1,4].");
+        }
+
+        if (config.GestureWindowMs < 100 || config.GestureWindowMs > 5000)
+        {
+            throw new InvalidOperationException("gestureWindowMs must be within [100,5000].");
+        }
+
+        if (config.RequestTimeoutMs < 500 || config.RequestTimeoutMs > 30000)
+        {
+            throw new InvalidOperationException("requestTimeoutMs must be within [500,30000].");
+        }
+
+        if (source == "gpio" && (config.GpioPin < 0 || config.GpioPin > 47))
+        {
+            throw new InvalidOperationException("gpioPin must be within [0,47] for source=gpio.");
+        }
+
+        return new UserPresenceConfigInfo
+        {
+            Enabled = source != "none",
+            Source = source,
+            GpioPin = source == "gpio" ? config.GpioPin : -1,
+            GpioActiveLow = config.GpioActiveLow,
+            TapCount = config.TapCount,
+            GestureWindowMs = config.GestureWindowMs,
+            RequestTimeoutMs = config.RequestTimeoutMs
+        };
+    }
+
+    private static byte[] BuildUserPresencePayload(byte[] token, UserPresenceConfigInfo config)
+    {
+        if (token.Length != AuthTokenBytes)
+        {
+            throw new InvalidOperationException("Authorization token size mismatch.");
+        }
+
+        var payload = new byte[AuthTokenBytes + UserPresencePayloadBytes];
+        token.CopyTo(payload.AsSpan(0, AuthTokenBytes));
+
+        payload[AuthTokenBytes + 0] = config.Source switch
+        {
+            "none" => 0,
+            "bootsel" => 1,
+            "gpio" => 2,
+            _ => throw new InvalidOperationException($"Unsupported user-presence source: {config.Source}")
+        };
+        payload[AuthTokenBytes + 1] = unchecked((byte)(sbyte)config.GpioPin);
+        payload[AuthTokenBytes + 2] = config.GpioActiveLow ? (byte)1 : (byte)0;
+        payload[AuthTokenBytes + 3] = checked((byte)config.TapCount);
+        BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(AuthTokenBytes + 4, 2), checked((ushort)config.GestureWindowMs));
+        BinaryPrimitives.WriteUInt16LittleEndian(payload.AsSpan(AuthTokenBytes + 6, 2), checked((ushort)config.RequestTimeoutMs));
         return payload;
     }
 
@@ -268,6 +525,33 @@ public sealed class ManagerDeviceService
         public int NextCursor { get; set; }
     }
 
+    private sealed class AuthorizationResponse
+    {
+        [JsonPropertyName("authorized")]
+        public bool Authorized { get; set; }
+
+        [JsonPropertyName("permissions")]
+        public int Permissions { get; set; }
+
+        [JsonPropertyName("ttlMs")]
+        public int TtlMs { get; set; }
+
+        [JsonPropertyName("token")]
+        public string? Token { get; set; }
+    }
+
+    private sealed class DeleteCredentialResponse
+    {
+        [JsonPropertyName("deleted")]
+        public bool Deleted { get; set; }
+    }
+
+    private sealed class UserPresenceWriteResponse
+    {
+        [JsonPropertyName("updated")]
+        public bool Updated { get; set; }
+    }
+
     private sealed class CredentialCatalogEntryResponse
     {
         [JsonPropertyName("slot")]
@@ -350,6 +634,12 @@ public sealed class ManagerDeviceService
 
         [JsonPropertyName("debugHidEnabled")]
         public bool DebugHidEnabled { get; set; }
+
+        [JsonPropertyName("simulatedSecureElementEnabled")]
+        public bool SimulatedSecureElementEnabled { get; set; }
+
+        [JsonPropertyName("credentialSummariesRequireAuth")]
+        public bool CredentialSummariesRequireAuth { get; set; }
 
         [JsonPropertyName("signedBootEnabled")]
         public bool SignedBootEnabled { get; set; }
@@ -515,5 +805,20 @@ public sealed class ManagerDeviceService
 
         [JsonPropertyName("keyInvalidMask")]
         public string? KeyInvalidMask { get; set; }
+    }
+
+    private sealed class AuthorizationCacheEntry
+    {
+        public byte[] Token { get; init; } = Array.Empty<byte>();
+        public ushort Permissions { get; init; }
+        public DateTimeOffset ExpiresAt { get; init; }
+    }
+
+    private sealed class AuthorizationStateView
+    {
+        public static AuthorizationStateView Empty { get; } = new();
+        public bool Active { get; init; }
+        public long ExpiresAtUnixMs { get; init; }
+        public int Permissions { get; init; }
     }
 }

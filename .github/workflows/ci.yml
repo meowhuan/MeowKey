@@ -33,7 +33,11 @@ jobs:
           python3 -m json.tool scripts/board-presets.json > /dev/null
           python3 -c "import os, py_compile, tempfile; py_compile.compile('scripts/gui_server.py', doraise=True, cfile=os.path.join(tempfile.gettempdir(), 'meowkey_gui_server.pyc'))"
           python3 -c "import os, py_compile, tempfile; py_compile.compile('scripts/release-artifacts.py', doraise=True, cfile=os.path.join(tempfile.gettempdir(), 'meowkey_release_artifacts.pyc'))"
+          python3 -c "import os, py_compile, tempfile; py_compile.compile('scripts/verify-manager-contract.py', doraise=True, cfile=os.path.join(tempfile.gettempdir(), 'meowkey_verify_manager_contract.pyc'))"
           bash -n scripts/flash.sh
+
+      - name: Validate manager-channel contract
+        run: python3 scripts/verify-manager-contract.py
 
       - name: Build firmware (debug)
         run: |
@@ -41,8 +45,10 @@ jobs:
             -DPICO_BOARD=meowkey_rp2350_usb \
             -DPICO_SDK_PATH="${PICO_SDK_CI_PATH}" \
             -DPICO_NO_PICOTOOL=ON \
+            -DMEOWKEY_ENABLE_SIMULATED_SECURE_ELEMENT=ON \
             -DMEOWKEY_VERSION_LABEL=ci
           cmake --build build-ci --parallel
+          grep -q "#define MEOWKEY_ENABLE_SIMULATED_SECURE_ELEMENT 1" build-ci/generated/meowkey_build_config.h
 
       - name: Build firmware (hardened)
         run: |
@@ -51,9 +57,12 @@ jobs:
             -DPICO_SDK_PATH="${PICO_SDK_CI_PATH}" \
             -DPICO_NO_PICOTOOL=ON \
             -DMEOWKEY_ENABLE_DEBUG_HID=OFF \
+            -DMEOWKEY_ENABLE_SIMULATED_SECURE_ELEMENT=ON \
             -DMEOWKEY_VERSION_LABEL=ci
           cmake --build build-ci-hardened --parallel
           grep -q "#define MEOWKEY_ENABLE_DEBUG_HID 0" build-ci-hardened/generated/meowkey_build_config.h
+          grep -q "#define MEOWKEY_ENABLE_SIMULATED_SECURE_ELEMENT 1" build-ci-hardened/generated/meowkey_build_config.h
+          grep -q "#define MEOWKEY_MANAGER_REQUIRE_AUTH_FOR_SUMMARIES 1" build-ci-hardened/generated/meowkey_build_config.h
 
       - name: Build probe firmware
         run: cmake --build build-ci --parallel --target meowkey_probe
@@ -66,12 +75,15 @@ jobs:
             -DPICO_SDK_PATH="${PICO_SDK_CI_PATH}" \
             -DPICOTOOL_FETCH_FROM_GIT_PATH="${PICOTOOL_FETCH_DIR}" \
             -DMEOWKEY_ENABLE_DEBUG_HID=OFF \
+            -DMEOWKEY_ENABLE_SIMULATED_SECURE_ELEMENT=ON \
             -DMEOWKEY_ENABLE_SIGNED_BOOT=ON \
             -DMEOWKEY_ENABLE_ANTI_ROLLBACK=ON \
             -DMEOWKEY_SIGNING_KEY="${RUNNER_TEMP}/meowkey-secureboot.pem" \
             -DMEOWKEY_VERSION_LABEL=ci
           cmake --build build-ci-secure-ready --parallel
           test -f build-ci-secure-ready/meowkey.otp.json
+          grep -q "#define MEOWKEY_ENABLE_SIMULATED_SECURE_ELEMENT 1" build-ci-secure-ready/generated/meowkey_build_config.h
+          grep -q "#define MEOWKEY_MANAGER_REQUIRE_AUTH_FOR_SUMMARIES 1" build-ci-secure-ready/generated/meowkey_build_config.h
 
   desktop:
     runs-on: windows-latest
@@ -119,3 +131,6 @@ jobs:
 
       - name: Build WinUI manager
         run: dotnet build windows/gui/MeowKey.Manager/MeowKey.Manager.csproj -c Release -p:ContinuousIntegrationBuild=true
+
+      - name: Build manager attack harness
+        run: dotnet build tests/manager-attack-harness/ManagerAttackHarness.csproj -c Release

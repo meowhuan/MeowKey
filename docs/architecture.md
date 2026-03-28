@@ -39,14 +39,20 @@ Development builds add:
 
 - Debug HID: `usagePage=0xFF00`, `usage=0x01`
 
-`src/manager_channel.c` currently keeps the formal management surface intentionally narrow:
+`src/manager_channel.c` now exposes both read-side inventory and manager-safe write actions:
 
 - `GET_SNAPSHOT`
 - `GET_CREDENTIAL_SUMMARIES`
 - `GET_SECURITY_STATE`
 - `PING`
+- `AUTHORIZE` (UP-gated short-lived permission token)
+- `DELETE_CREDENTIAL` (per-slot delete through management channel)
+- `SET_USER_PRESENCE_PERSISTED`
+- `SET_USER_PRESENCE_SESSION`
+- `CLEAR_USER_PRESENCE_SESSION`
 
-That interface is meant for manager-safe inventory and posture reads, not as a clone of Debug HID.
+The write path is still intentionally scoped: host must first request `AUTHORIZE`, the device asks for local user presence, then grants a short-lived token bound to explicit permission bits.
+Credential-summary reads can also be configured to require the same short-lived authorization gate (enabled by default for hardened builds).
 
 ### 4. CTAPHID Layer
 
@@ -221,14 +227,20 @@ USB 收到 HID 输出报文后的处理路径为：
 
 - Debug HID：`usagePage=0xFF00`，`usage=0x01`
 
-`src/manager_channel.c` 目前刻意把正式管理面收得很窄：
+`src/manager_channel.c` 现在已经覆盖“读 + 受控写”两类正式管理能力：
 
 - `GET_SNAPSHOT`
 - `GET_CREDENTIAL_SUMMARIES`
 - `GET_SECURITY_STATE`
 - `PING`
+- `AUTHORIZE`（先走本地在场确认，再下发短时权限 token）
+- `DELETE_CREDENTIAL`（通过正式管理通道按槽位删除单条凭据）
+- `SET_USER_PRESENCE_PERSISTED`
+- `SET_USER_PRESENCE_SESSION`
+- `CLEAR_USER_PRESENCE_SESSION`
 
-这个接口的目标是提供管理器可用的 inventory / posture 读取能力，而不是把 Debug HID 原样复制过去。
+写路径仍然是收敛的：主机需要先调用 `AUTHORIZE`，设备确认本地在场后才会下发带权限位的短时 token，再允许对应写命令执行。这条链路不是 Debug HID 的镜像替代。
+凭据摘要读取也可以配置为走同样的短时授权门控（`hardened` 构建默认开启）。
 
 ### 4. CTAPHID 层
 

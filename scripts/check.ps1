@@ -13,8 +13,10 @@ $projectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $boardPresetsPath = Join-Path $PSScriptRoot "board-presets.json"
 $guiServerPath = Join-Path $PSScriptRoot "gui_server.py"
 $probeScriptPath = Join-Path $PSScriptRoot "probe-board.ps1"
+$managerContractPath = Join-Path $PSScriptRoot "verify-manager-contract.py"
 $cargoManifestPath = Join-Path $projectRoot "native-rs\meowkey-manager\Cargo.toml"
 $winUiProjectPath = Join-Path $projectRoot "windows\gui\MeowKey.Manager\MeowKey.Manager.csproj"
+$attackHarnessProjectPath = Join-Path $projectRoot "tests\manager-attack-harness\ManagerAttackHarness.csproj"
 
 Write-Host "[check] validating board presets JSON"
 $presets = Get-Content -Path $boardPresetsPath -Raw | ConvertFrom-Json
@@ -25,6 +27,9 @@ if (-not $presets.presets) {
 Write-Host "[check] validating gui_server.py syntax"
 $tempPyc = Join-Path ([System.IO.Path]::GetTempPath()) "meowkey_gui_server.pyc"
 python -c "import py_compile; py_compile.compile(r'$guiServerPath', doraise=True, cfile=r'$tempPyc')"
+
+Write-Host "[check] validating manager-channel contract"
+python $managerContractPath
 
 Write-Host "[check] validating probe-board.ps1 with sample input"
 $probeSamplePath = Join-Path ([System.IO.Path]::GetTempPath()) "meowkey_probe_sample.json"
@@ -84,6 +89,14 @@ if (-not $SkipFirmware) {
         -BuildDir $BuildDir `
         -NoPicotool `
         -IgnoreGitGlobalConfig
+    $defaultConfigHeader = Join-Path $projectRoot "$BuildDir\generated\meowkey_build_config.h"
+    if (-not (Test-Path $defaultConfigHeader)) {
+        throw "Default build did not generate meowkey_build_config.h"
+    }
+    $defaultConfig = Get-Content -Path $defaultConfigHeader -Raw
+    if ($defaultConfig -notmatch "#define MEOWKEY_ENABLE_SIMULATED_SECURE_ELEMENT 1") {
+        throw "Default build must enable simulated secure element."
+    }
 
     Write-Host "[check] building hardened firmware"
     powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "build.ps1") `
@@ -91,6 +104,20 @@ if (-not $SkipFirmware) {
         -NoPicotool `
         -IgnoreGitGlobalConfig `
         -DisableDebugHid
+    $hardenedConfigHeader = Join-Path $projectRoot "$HardenedBuildDir\generated\meowkey_build_config.h"
+    if (-not (Test-Path $hardenedConfigHeader)) {
+        throw "Hardened build did not generate meowkey_build_config.h"
+    }
+    $hardenedConfig = Get-Content -Path $hardenedConfigHeader -Raw
+    if ($hardenedConfig -notmatch "#define MEOWKEY_ENABLE_DEBUG_HID 0") {
+        throw "Hardened build must disable Debug HID."
+    }
+    if ($hardenedConfig -notmatch "#define MEOWKEY_ENABLE_SIMULATED_SECURE_ELEMENT 1") {
+        throw "Hardened build must enable simulated secure element."
+    }
+    if ($hardenedConfig -notmatch "#define MEOWKEY_MANAGER_REQUIRE_AUTH_FOR_SUMMARIES 1") {
+        throw "Hardened build must require authorization for credential summaries."
+    }
 
     Write-Host "[check] building probe firmware"
     powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "build.ps1") `
@@ -106,6 +133,9 @@ if (-not $SkipDesktop) {
 
     Write-Host "[check] dotnet build WinUI manager"
     dotnet build $winUiProjectPath -c Release -p:ContinuousIntegrationBuild=true
+
+    Write-Host "[check] dotnet build manager attack harness"
+    dotnet build $attackHarnessProjectPath -c Release
 }
 
 Write-Host "[check] all checks passed"

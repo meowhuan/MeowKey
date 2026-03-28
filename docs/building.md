@@ -18,6 +18,8 @@ Hardened build without Debug HID:
 powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -BuildDir build-hardened -NoPicotool -IgnoreGitGlobalConfig -DisableDebugHid
 ```
 
+By default, `scripts/build.ps1` enables simulated secure-element software wrapping. Use `-EnableSimulatedSecureElement:$false` to opt out.
+
 Hardened build with signed boot and anti-rollback metadata:
 
 ```powershell
@@ -56,6 +58,7 @@ Use the preset name as the stable identifier. The shopping link is only a conven
 - `-CredentialCapacity`: explicit credential cap; `0` means auto-size from the reserved store region
 - `-CredentialStoreKB`: credential store size in `4 KB` units; minimum is currently `16 KB`
 - `-DisableDebugHid`: build without Debug HID
+- `-EnableSimulatedSecureElement`: defaults to enabled; pass `-EnableSimulatedSecureElement:$false` to disable
 - `-UserPresenceSource`: `none | bootsel | gpio`
 - `-UserPresenceGpioPin`: GPIO pin when `-UserPresenceSource gpio`
 - `-UserPresenceGpioActiveState`: `low | high`
@@ -228,6 +231,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -BuildDir build -No
 powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -BuildDir build-hardened -NoPicotool -IgnoreGitGlobalConfig -DisableDebugHid
 ```
 
+`scripts/build.ps1` 现在默认启用模拟安全元件的软件封装；如需关闭，可显式传 `-EnableSimulatedSecureElement:$false`。
+
 启用 signed boot 和 anti-rollback metadata 的硬化构建：
 
 ```powershell
@@ -266,6 +271,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -Preset usb-a-baseb
 - `-CredentialCapacity`：显式限制凭据数量；`0` 表示按存储区域自动计算
 - `-CredentialStoreKB`：凭据存储大小，必须按 `4 KB` 对齐，当前最小为 `16 KB`
 - `-DisableDebugHid`：关闭 Debug HID
+- `-EnableSimulatedSecureElement`：默认开启；如需关闭可传 `-EnableSimulatedSecureElement:$false`
 - `-UserPresenceSource`：`none | bootsel | gpio`
 - `-UserPresenceGpioPin`：当使用 GPIO 作为 UP 源时指定引脚
 - `-UserPresenceGpioActiveState`：`low | high`

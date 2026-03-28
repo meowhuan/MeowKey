@@ -12,6 +12,10 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
+DEBUG_HID_DEFINE = "MEOWKEY_ENABLE_DEBUG_HID"
+SIMULATED_SE_DEFINE = "MEOWKEY_ENABLE_SIMULATED_SECURE_ELEMENT"
+SUMMARY_AUTH_DEFINE = "MEOWKEY_MANAGER_REQUIRE_AUTH_FOR_SUMMARIES"
+
 
 @dataclass(frozen=True)
 class ReleaseArtifact:
@@ -119,11 +123,33 @@ def ensure_clean_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+def parse_build_config_flags(build_config_header: Path) -> dict[str, bool]:
+    if not build_config_header.exists():
+        raise FileNotFoundError(f"build config header not found: {build_config_header}")
+
+    values: dict[str, bool] = {}
+    for line in build_config_header.read_text(encoding="utf-8").splitlines():
+        parts = line.strip().split()
+        if len(parts) == 3 and parts[0] == "#define":
+            macro_name = parts[1]
+            macro_value = parts[2]
+            if macro_name in (DEBUG_HID_DEFINE, SIMULATED_SE_DEFINE, SUMMARY_AUTH_DEFINE):
+                values[macro_name] = macro_value == "1"
+
+    missing = [name for name in (DEBUG_HID_DEFINE, SIMULATED_SE_DEFINE, SUMMARY_AUTH_DEFINE) if name not in values]
+    if missing:
+        joined = ", ".join(missing)
+        raise ValueError(f"build config header missing required macros: {joined}")
+
+    return values
+
+
 def write_manifest(
     package_dir: Path,
     tag: str,
     version: dict[str, int | str],
     artifact: ReleaseArtifact,
+    build_flags: dict[str, bool],
 ) -> None:
     manifest = {
         "project": "MeowKey",
@@ -135,7 +161,9 @@ def write_manifest(
         "presetName": artifact.preset_name,
         "presetPackageLabel": artifact.preset_package_label,
         "presetDescription": artifact.preset_description,
-        "debugHidEnabled": artifact.debug_hid_enabled,
+        "debugHidEnabled": build_flags[DEBUG_HID_DEFINE],
+        "simulatedSecureElementEnabled": build_flags[SIMULATED_SE_DEFINE],
+        "credentialSummariesRequireAuth": build_flags[SUMMARY_AUTH_DEFINE],
         "secureBootSupported": True,
         "secureBootSigned": artifact.secure_boot_signed,
         "secureBootOtpHashIncluded": artifact.secure_boot_signed,
@@ -177,12 +205,19 @@ def package_artifact(
     package_dir = dist_dir / package_name
     ensure_clean_dir(package_dir)
 
+    generated_header = build_dir / "generated" / "meowkey_build_config.h"
+    build_flags = parse_build_config_flags(generated_header)
+    if artifact.debug_hid_enabled is not None and build_flags[DEBUG_HID_DEFINE] != artifact.debug_hid_enabled:
+        raise ValueError(
+            f"artifact {artifact.package_slug} expected debug_hid_enabled={artifact.debug_hid_enabled}, "
+            f"but build config reports {build_flags[DEBUG_HID_DEFINE]}"
+        )
+
     for suffix in ("uf2", "bin", "hex", "elf", "elf.map"):
         source = build_dir / f"{artifact.binary_stem}.{suffix}"
         if source.exists():
             shutil.copy2(source, package_dir / source.name)
 
-    generated_header = build_dir / "generated" / "meowkey_build_config.h"
     if generated_header.exists():
         shutil.copy2(generated_header, package_dir / generated_header.name)
 
@@ -191,7 +226,7 @@ def package_artifact(
         shutil.copy2(otp_json, package_dir / otp_json.name)
 
     copy_flash_scripts(repo_root, package_dir)
-    write_manifest(package_dir, tag, version, artifact)
+    write_manifest(package_dir, tag, version, artifact, build_flags)
 
     zip_path = dist_dir / f"{package_name}.zip"
     if zip_path.exists():
@@ -251,6 +286,7 @@ def main() -> None:
         "MEOWKEY_VERSION_PATCH": str(args.version_patch),
         "MEOWKEY_VERSION_LABEL": args.version_label,
         "PICOTOOL_FETCH_FROM_GIT_PATH": args.picotool_fetch_path,
+        "MEOWKEY_ENABLE_SIMULATED_SECURE_ELEMENT": bool_to_cmake(True),
     }
 
     secure_boot_defs = {}

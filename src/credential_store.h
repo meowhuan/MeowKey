@@ -61,6 +61,7 @@ uint32_t meowkey_store_get_credential_count(void);
 uint32_t meowkey_store_get_credential_capacity(void);
 bool meowkey_store_get_credential_by_slot(uint32_t slot_index, meowkey_credential_record_t *record);
 bool meowkey_store_update_sign_count(uint32_t slot_index, uint32_t sign_count);
+bool meowkey_store_delete_credential_by_slot(uint32_t slot_index);
 bool meowkey_store_clear_credentials(void);
 void meowkey_store_get_pin_state(meowkey_pin_state_t *state);
 bool meowkey_store_set_pin_state(const meowkey_pin_state_t *state);

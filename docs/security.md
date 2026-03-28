@@ -24,6 +24,7 @@ Current implemented tightening includes:
 - ECDH peer public keys are validated before shared-secret derivation
 - sensitive intermediates on the main `clientPIN`, signing, and `hmac-secret` paths are scrubbed after use
 - the main credential store is transactional, and sign counts are journaled separately
+- optional simulated-secure-element software wrapping for credential secrets is available
 - optional RP2350 signed boot, OTP hash material generation, and anti-rollback metadata are available
 
 ### 3. Real Boundaries Today
@@ -39,6 +40,7 @@ Important facts that should not be hidden:
 ### 4. Remaining Risks
 
 - there is no secure element and no hardware-backed non-exportable key boundary
+- simulated-secure-element mode is still software-only and stays inside the MCU firmware trust boundary
 - there are no permission-scoped tokens or RP-scoped authorization rules yet
 - signed boot and anti-rollback remain opt-in and do not by themselves define provisioning or recovery
 - storage still has no wear leveling
@@ -92,6 +94,7 @@ MeowKey 目前最好按三种模式来理解：
 - ECDH 对端公钥在共享密钥推导前会做显式校验
 - 主要 `clientPIN`、签名和 `hmac-secret` 路径上的敏感中间缓冲区会在使用后清零
 - 主凭据存储区已经事务化，`signCount` 也走独立 journal
+- 可选的“模拟安全元件”软件封装能力已经可用
 - 可选的 RP2350 signed boot、OTP 哈希材料输出和 anti-rollback metadata 已经具备
 
 ### 3. 当前真实边界
@@ -107,6 +110,7 @@ MeowKey 目前最好按三种模式来理解：
 ### 4. 仍然存在的风险
 
 - 目前没有安全元件，也没有硬件支持的不可导出私钥边界
+- “模拟安全元件”模式仍然只是软件语义，依旧处在 MCU 固件信任边界内部
 - 还没有权限范围 token，也没有 RP 绑定的细粒度授权规则
 - signed boot 和 anti-rollback 仍然是可选能力，本身不等于 provisioning / 恢复流程已经完整
 - 存储层仍然没有磨损均衡

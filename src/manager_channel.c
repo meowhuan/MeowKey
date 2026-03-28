@@ -7,10 +7,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "bsp/board_api.h"
 #include "board_id.h"
 #include "credential_store.h"
 #include "ctap_hid.h"
 #include "meowkey_build_config.h"
+#include "pico/rand.h"
 #include "pico/unique_id.h"
 #include "security_status.h"
 #include "tusb.h"
@@ -30,6 +32,11 @@ enum {
     MEOWKEY_MANAGER_CMD_PING = 0x02u,
     MEOWKEY_MANAGER_CMD_GET_CREDENTIAL_SUMMARIES = 0x03u,
     MEOWKEY_MANAGER_CMD_GET_SECURITY_STATE = 0x04u,
+    MEOWKEY_MANAGER_CMD_AUTHORIZE = 0x05u,
+    MEOWKEY_MANAGER_CMD_DELETE_CREDENTIAL = 0x06u,
+    MEOWKEY_MANAGER_CMD_SET_USER_PRESENCE_PERSISTED = 0x07u,
+    MEOWKEY_MANAGER_CMD_SET_USER_PRESENCE_SESSION = 0x08u,
+    MEOWKEY_MANAGER_CMD_CLEAR_USER_PRESENCE_SESSION = 0x09u,
 };
 
 enum {
@@ -37,6 +44,8 @@ enum {
     MEOWKEY_MANAGER_STATUS_INVALID_REQUEST = 0x01u,
     MEOWKEY_MANAGER_STATUS_UNSUPPORTED_COMMAND = 0x02u,
     MEOWKEY_MANAGER_STATUS_INTERNAL_ERROR = 0x03u,
+    MEOWKEY_MANAGER_STATUS_AUTH_REQUIRED = 0x04u,
+    MEOWKEY_MANAGER_STATUS_CONFIRMATION_REQUIRED = 0x05u,
 };
 
 enum {
@@ -47,13 +56,35 @@ enum {
     MEOWKEY_MANAGER_USER_NAME_PREVIEW_SIZE = 24u,
     MEOWKEY_MANAGER_DISPLAY_NAME_PREVIEW_SIZE = 24u,
     MEOWKEY_MANAGER_CREDENTIAL_ID_PREFIX_BYTES = 8u,
+    MEOWKEY_MANAGER_AUTH_TOKEN_SIZE = 16u,
+    MEOWKEY_MANAGER_AUTH_TTL_MS = 30000u,
+    MEOWKEY_MANAGER_AUTH_PAYLOAD_SIZE = 2u,
+    MEOWKEY_MANAGER_DELETE_CREDENTIAL_PAYLOAD_SIZE = MEOWKEY_MANAGER_AUTH_TOKEN_SIZE + 2u,
+    MEOWKEY_MANAGER_SET_USER_PRESENCE_PAYLOAD_SIZE = MEOWKEY_MANAGER_AUTH_TOKEN_SIZE + 8u,
+    MEOWKEY_MANAGER_CLEAR_USER_PRESENCE_SESSION_PAYLOAD_SIZE = MEOWKEY_MANAGER_AUTH_TOKEN_SIZE,
+    MEOWKEY_MANAGER_CREDENTIAL_PAGE_AUTH_PAYLOAD_SIZE = MEOWKEY_MANAGER_AUTH_TOKEN_SIZE + 4u,
+    MEOWKEY_MANAGER_PERMISSION_CREDENTIAL_READ = 0x0004u,
+    MEOWKEY_MANAGER_PERMISSION_CREDENTIAL_WRITE = 0x0001u,
+    MEOWKEY_MANAGER_PERMISSION_USER_PRESENCE_WRITE = 0x0002u,
+    CTAP2_STATUS_OK = 0x00u,
 };
 
 static uint8_t s_response_buffer[MEOWKEY_MANAGER_MAX_RESPONSE_SIZE];
 
 typedef struct {
+    bool active;
+    uint8_t token[MEOWKEY_MANAGER_AUTH_TOKEN_SIZE];
+    uint16_t permissions;
+    uint32_t issued_at_ms;
+} meowkey_manager_auth_state_t;
+
+static meowkey_manager_auth_state_t s_auth_state;
+
+typedef struct {
     uint16_t cursor;
     uint16_t limit;
+    bool has_auth_token;
+    uint8_t auth_token[MEOWKEY_MANAGER_AUTH_TOKEN_SIZE];
 } meowkey_manager_credential_page_t;
 
 static uint16_t read_le16(const uint8_t *data) {
@@ -252,6 +283,157 @@ static size_t hex_prefix(const uint8_t *data, size_t length, char *output, size_
     return prefix_length * 2u;
 }
 
+static void secure_zero(void *buffer, size_t length) {
+    volatile uint8_t *bytes = (volatile uint8_t *)buffer;
+    while (length-- > 0u) {
+        *bytes++ = 0u;
+    }
+}
+
+static bool constant_time_equal(const uint8_t *left, const uint8_t *right, size_t length) {
+    uint8_t diff = 0u;
+    size_t index;
+
+    for (index = 0u; index < length; ++index) {
+        diff |= (uint8_t)(left[index] ^ right[index]);
+    }
+
+    return diff == 0u;
+}
+
+static bool hex_full(const uint8_t *data, size_t length, char *output, size_t output_capacity) {
+    static const char k_hex[] = "0123456789abcdef";
+    size_t index;
+
+    if (output == NULL || output_capacity == 0u) {
+        return false;
+    }
+    if ((length * 2u + 1u) > output_capacity) {
+        return false;
+    }
+
+    for (index = 0u; index < length; ++index) {
+        output[index * 2u] = k_hex[data[index] >> 4u];
+        output[index * 2u + 1u] = k_hex[data[index] & 0x0fu];
+    }
+    output[length * 2u] = '\0';
+    return true;
+}
+
+static void manager_auth_clear(void) {
+    secure_zero(s_auth_state.token, sizeof(s_auth_state.token));
+    s_auth_state.active = false;
+    s_auth_state.permissions = 0u;
+    s_auth_state.issued_at_ms = 0u;
+}
+
+static bool manager_auth_is_active(void) {
+    if (!s_auth_state.active) {
+        return false;
+    }
+    if ((board_millis() - s_auth_state.issued_at_ms) > MEOWKEY_MANAGER_AUTH_TTL_MS) {
+        manager_auth_clear();
+        return false;
+    }
+    return true;
+}
+
+static bool manager_auth_verify(const uint8_t provided_token[MEOWKEY_MANAGER_AUTH_TOKEN_SIZE], uint16_t permission) {
+    if (!manager_auth_is_active()) {
+        return false;
+    }
+    if ((s_auth_state.permissions & permission) == 0u) {
+        return false;
+    }
+    return constant_time_equal(provided_token, s_auth_state.token, MEOWKEY_MANAGER_AUTH_TOKEN_SIZE);
+}
+
+static void manager_auth_issue(uint16_t permissions) {
+    size_t offset = 0u;
+
+    while (offset < MEOWKEY_MANAGER_AUTH_TOKEN_SIZE) {
+        uint32_t value = get_rand_32();
+        size_t chunk = (MEOWKEY_MANAGER_AUTH_TOKEN_SIZE - offset) < sizeof(value)
+            ? (MEOWKEY_MANAGER_AUTH_TOKEN_SIZE - offset)
+            : sizeof(value);
+        memcpy(&s_auth_state.token[offset], &value, chunk);
+        offset += chunk;
+    }
+
+    s_auth_state.permissions = permissions;
+    s_auth_state.issued_at_ms = board_millis();
+    s_auth_state.active = true;
+}
+
+static bool parse_manager_permission_request(const uint8_t *payload, size_t payload_length, uint16_t *permissions) {
+    uint16_t requested;
+    uint16_t allowed_permissions = MEOWKEY_MANAGER_PERMISSION_CREDENTIAL_WRITE |
+                                   MEOWKEY_MANAGER_PERMISSION_USER_PRESENCE_WRITE |
+                                   MEOWKEY_MANAGER_PERMISSION_CREDENTIAL_READ;
+
+    if (permissions == NULL || payload == NULL || payload_length != MEOWKEY_MANAGER_AUTH_PAYLOAD_SIZE) {
+        return false;
+    }
+
+    requested = read_le16(payload);
+    if (requested == 0u || (requested & (uint16_t)~allowed_permissions) != 0u) {
+        return false;
+    }
+
+    *permissions = requested;
+    return true;
+}
+
+static bool parse_delete_credential_request(const uint8_t *payload,
+                                            size_t payload_length,
+                                            uint8_t token[MEOWKEY_MANAGER_AUTH_TOKEN_SIZE],
+                                            uint16_t *slot_index) {
+    if (payload == NULL || token == NULL || slot_index == NULL ||
+        payload_length != MEOWKEY_MANAGER_DELETE_CREDENTIAL_PAYLOAD_SIZE) {
+        return false;
+    }
+
+    memcpy(token, payload, MEOWKEY_MANAGER_AUTH_TOKEN_SIZE);
+    *slot_index = read_le16(&payload[MEOWKEY_MANAGER_AUTH_TOKEN_SIZE]);
+    return true;
+}
+
+static bool parse_user_presence_update_request(const uint8_t *payload,
+                                               size_t payload_length,
+                                               uint8_t token[MEOWKEY_MANAGER_AUTH_TOKEN_SIZE],
+                                               meowkey_user_presence_config_t *config) {
+    const uint8_t *cursor;
+
+    if (payload == NULL || token == NULL || config == NULL ||
+        payload_length != MEOWKEY_MANAGER_SET_USER_PRESENCE_PAYLOAD_SIZE) {
+        return false;
+    }
+
+    memcpy(token, payload, MEOWKEY_MANAGER_AUTH_TOKEN_SIZE);
+    cursor = &payload[MEOWKEY_MANAGER_AUTH_TOKEN_SIZE];
+
+    memset(config, 0, sizeof(*config));
+    config->source = cursor[0];
+    config->gpio_pin = (int8_t)cursor[1];
+    config->gpio_active_low = cursor[2];
+    config->tap_count = cursor[3];
+    config->gesture_window_ms = read_le16(&cursor[4]);
+    config->request_timeout_ms = read_le16(&cursor[6]);
+    return true;
+}
+
+static bool parse_user_presence_clear_request(const uint8_t *payload,
+                                              size_t payload_length,
+                                              uint8_t token[MEOWKEY_MANAGER_AUTH_TOKEN_SIZE]) {
+    if (payload == NULL || token == NULL ||
+        payload_length != MEOWKEY_MANAGER_CLEAR_USER_PRESENCE_SESSION_PAYLOAD_SIZE) {
+        return false;
+    }
+
+    memcpy(token, payload, MEOWKEY_MANAGER_AUTH_TOKEN_SIZE);
+    return true;
+}
+
 static bool parse_credential_page_request(const uint8_t *payload,
                                           size_t payload_length,
                                           meowkey_manager_credential_page_t *request) {
@@ -261,16 +443,28 @@ static bool parse_credential_page_request(const uint8_t *payload,
 
     request->cursor = 0u;
     request->limit = MEOWKEY_MANAGER_CREDENTIAL_PAGE_DEFAULT_LIMIT;
+    request->has_auth_token = false;
+    memset(request->auth_token, 0, sizeof(request->auth_token));
 
     if (payload_length == 0u) {
         return true;
     }
-    if (payload == NULL || payload_length != 4u) {
+    if (payload == NULL) {
         return false;
     }
 
-    request->cursor = read_le16(payload);
-    request->limit = read_le16(&payload[2]);
+    if (payload_length == 4u) {
+        request->cursor = read_le16(payload);
+        request->limit = read_le16(&payload[2]);
+    } else if (payload_length == MEOWKEY_MANAGER_CREDENTIAL_PAGE_AUTH_PAYLOAD_SIZE) {
+        memcpy(request->auth_token, payload, MEOWKEY_MANAGER_AUTH_TOKEN_SIZE);
+        request->cursor = read_le16(&payload[MEOWKEY_MANAGER_AUTH_TOKEN_SIZE]);
+        request->limit = read_le16(&payload[MEOWKEY_MANAGER_AUTH_TOKEN_SIZE + 2u]);
+        request->has_auth_token = true;
+    } else {
+        return false;
+    }
+
     if (request->limit == 0u) {
         request->limit = MEOWKEY_MANAGER_CREDENTIAL_PAGE_DEFAULT_LIMIT;
     }
@@ -391,6 +585,8 @@ static size_t build_snapshot_json(char *output, size_t output_capacity) {
         "\"flavor\":\"%s\","
         "\"version\":\"%s\","
         "\"debugHidEnabled\":%s,"
+        "\"simulatedSecureElementEnabled\":%s,"
+        "\"credentialSummariesRequireAuth\":%s,"
         "\"signedBootEnabled\":%s,"
         "\"antiRollbackEnabled\":%s,"
         "\"antiRollbackVersion\":%lu"
@@ -398,6 +594,8 @@ static size_t build_snapshot_json(char *output, size_t output_capacity) {
         build_flavor_name(),
         escaped_version,
         bool_json(MEOWKEY_ENABLE_DEBUG_HID != 0),
+        bool_json(MEOWKEY_ENABLE_SIMULATED_SECURE_ELEMENT != 0),
+        bool_json(MEOWKEY_MANAGER_REQUIRE_AUTH_FOR_SUMMARIES != 0),
         bool_json(MEOWKEY_ENABLE_SIGNED_BOOT != 0),
         bool_json(MEOWKEY_ENABLE_ANTI_ROLLBACK != 0),
         (unsigned long)MEOWKEY_ANTI_ROLLBACK_VERSION);
@@ -506,6 +704,8 @@ static size_t build_security_state_json(char *output, size_t output_capacity) {
         "\"build\":{"
         "\"flavor\":\"%s\","
         "\"version\":\"%s\","
+        "\"simulatedSecureElementEnabled\":%s,"
+        "\"credentialSummariesRequireAuth\":%s,"
         "\"signedBootEnabled\":%s,"
         "\"antiRollbackEnabled\":%s,"
         "\"antiRollbackVersion\":%lu"
@@ -551,6 +751,8 @@ static size_t build_security_state_json(char *output, size_t output_capacity) {
         (unsigned int)MEOWKEY_MANAGER_PROTOCOL_VERSION,
         build_flavor_name(),
         escaped_version,
+        bool_json(MEOWKEY_ENABLE_SIMULATED_SECURE_ELEMENT != 0),
+        bool_json(MEOWKEY_MANAGER_REQUIRE_AUTH_FOR_SUMMARIES != 0),
         bool_json(security_status.signed_boot_enabled),
         bool_json(security_status.anti_rollback_enabled),
         (unsigned long)security_status.anti_rollback_version,
@@ -754,6 +956,100 @@ static size_t build_credential_summaries_json(char *output,
     return used >= output_capacity ? 0u : used;
 }
 
+static size_t build_authorize_json(char *output, size_t output_capacity, uint16_t permissions) {
+    char token_hex[(MEOWKEY_MANAGER_AUTH_TOKEN_SIZE * 2u) + 1u];
+    int written;
+
+    if (!hex_full(s_auth_state.token, MEOWKEY_MANAGER_AUTH_TOKEN_SIZE, token_hex, sizeof(token_hex))) {
+        return 0u;
+    }
+
+    written = snprintf(output,
+                       output_capacity,
+                       "{"
+                       "\"protocolVersion\":%u,"
+                       "\"authorized\":true,"
+                       "\"permissions\":%u,"
+                       "\"ttlMs\":%u,"
+                       "\"token\":\"%s\""
+                       "}",
+                       (unsigned int)MEOWKEY_MANAGER_PROTOCOL_VERSION,
+                       (unsigned int)permissions,
+                       (unsigned int)MEOWKEY_MANAGER_AUTH_TTL_MS,
+                       token_hex);
+    if (written < 0 || (size_t)written >= output_capacity) {
+        return 0u;
+    }
+    return (size_t)written;
+}
+
+static size_t build_delete_credential_json(char *output,
+                                           size_t output_capacity,
+                                           uint16_t slot_index,
+                                           bool deleted) {
+    int written;
+
+    meowkey_store_init();
+
+    written = snprintf(output,
+                       output_capacity,
+                       "{"
+                       "\"protocolVersion\":%u,"
+                       "\"deleted\":%s,"
+                       "\"slot\":%u,"
+                       "\"remaining\":%lu,"
+                       "\"capacity\":%lu"
+                       "}",
+                       (unsigned int)MEOWKEY_MANAGER_PROTOCOL_VERSION,
+                       bool_json(deleted),
+                       (unsigned int)slot_index,
+                       (unsigned long)meowkey_store_get_credential_count(),
+                       (unsigned long)meowkey_store_get_credential_capacity());
+    if (written < 0 || (size_t)written >= output_capacity) {
+        return 0u;
+    }
+    return (size_t)written;
+}
+
+static size_t build_user_presence_write_json(char *output,
+                                             size_t output_capacity,
+                                             const char *scope,
+                                             bool updated) {
+    meowkey_user_presence_config_t effective;
+    meowkey_user_presence_config_t persisted;
+    char effective_json[192];
+    char persisted_json[192];
+    int written;
+
+    meowkey_user_presence_get_config(&effective);
+    meowkey_user_presence_get_persisted_config(&persisted);
+    if (build_user_presence_config_json(effective_json, sizeof(effective_json), &effective) == 0u ||
+        build_user_presence_config_json(persisted_json, sizeof(persisted_json), &persisted) == 0u) {
+        return 0u;
+    }
+
+    written = snprintf(output,
+                       output_capacity,
+                       "{"
+                       "\"protocolVersion\":%u,"
+                       "\"updated\":%s,"
+                       "\"scope\":\"%s\","
+                       "\"sessionOverride\":%s,"
+                       "\"effective\":%s,"
+                       "\"persisted\":%s"
+                       "}",
+                       (unsigned int)MEOWKEY_MANAGER_PROTOCOL_VERSION,
+                       bool_json(updated),
+                       scope != NULL ? scope : "unknown",
+                       bool_json(meowkey_user_presence_has_session_override()),
+                       effective_json,
+                       persisted_json);
+    if (written < 0 || (size_t)written >= output_capacity) {
+        return 0u;
+    }
+    return (size_t)written;
+}
+
 static void send_response(uint8_t status, uint8_t command, const char *payload, size_t payload_length) {
     size_t total_length;
     uint32_t written;
@@ -784,6 +1080,7 @@ static void send_response(uint8_t status, uint8_t command, const char *payload, 
 
 void meowkey_manager_init(void) {
     memset(s_response_buffer, 0, sizeof(s_response_buffer));
+    manager_auth_clear();
 }
 
 void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize) {
@@ -852,6 +1149,13 @@ void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize) {
             send_response(MEOWKEY_MANAGER_STATUS_INVALID_REQUEST, command, NULL, 0u);
             break;
         }
+#if MEOWKEY_MANAGER_REQUIRE_AUTH_FOR_SUMMARIES
+        if (!request.has_auth_token ||
+            !manager_auth_verify(request.auth_token, MEOWKEY_MANAGER_PERMISSION_CREDENTIAL_READ)) {
+            send_response(MEOWKEY_MANAGER_STATUS_AUTH_REQUIRED, command, NULL, 0u);
+            break;
+        }
+#endif
 
         response_length = build_credential_summaries_json(response_payload, sizeof(response_payload), &request);
         if (response_length == 0u) {
@@ -874,6 +1178,119 @@ void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize) {
             send_response(MEOWKEY_MANAGER_STATUS_OK, command, response_payload, response_length);
         }
         break;
+
+    case MEOWKEY_MANAGER_CMD_AUTHORIZE: {
+        uint16_t permissions = 0u;
+        uint8_t up_status;
+
+        if (!parse_manager_permission_request(request_payload, payload_length, &permissions)) {
+            send_response(MEOWKEY_MANAGER_STATUS_INVALID_REQUEST, command, NULL, 0u);
+            break;
+        }
+
+        up_status = meowkey_user_presence_wait_for_confirmation("manager-authorize");
+        if (up_status != CTAP2_STATUS_OK) {
+            send_response(MEOWKEY_MANAGER_STATUS_CONFIRMATION_REQUIRED, command, NULL, 0u);
+            break;
+        }
+
+        manager_auth_issue(permissions);
+        response_length = build_authorize_json(response_payload, sizeof(response_payload), permissions);
+        if (response_length == 0u) {
+            send_response(MEOWKEY_MANAGER_STATUS_INTERNAL_ERROR, command, NULL, 0u);
+        } else {
+            send_response(MEOWKEY_MANAGER_STATUS_OK, command, response_payload, response_length);
+        }
+        break;
+    }
+
+    case MEOWKEY_MANAGER_CMD_DELETE_CREDENTIAL: {
+        uint8_t token[MEOWKEY_MANAGER_AUTH_TOKEN_SIZE];
+        uint16_t slot_index = 0u;
+        bool deleted;
+
+        if (!parse_delete_credential_request(request_payload, payload_length, token, &slot_index)) {
+            send_response(MEOWKEY_MANAGER_STATUS_INVALID_REQUEST, command, NULL, 0u);
+            break;
+        }
+
+        if (!manager_auth_verify(token, MEOWKEY_MANAGER_PERMISSION_CREDENTIAL_WRITE)) {
+            send_response(MEOWKEY_MANAGER_STATUS_AUTH_REQUIRED, command, NULL, 0u);
+            break;
+        }
+
+        deleted = meowkey_store_delete_credential_by_slot(slot_index);
+        if (!deleted) {
+            send_response(MEOWKEY_MANAGER_STATUS_INVALID_REQUEST, command, NULL, 0u);
+            break;
+        }
+
+        response_length = build_delete_credential_json(response_payload, sizeof(response_payload), slot_index, true);
+        if (response_length == 0u) {
+            send_response(MEOWKEY_MANAGER_STATUS_INTERNAL_ERROR, command, NULL, 0u);
+        } else {
+            send_response(MEOWKEY_MANAGER_STATUS_OK, command, response_payload, response_length);
+        }
+        break;
+    }
+
+    case MEOWKEY_MANAGER_CMD_SET_USER_PRESENCE_PERSISTED:
+    case MEOWKEY_MANAGER_CMD_SET_USER_PRESENCE_SESSION: {
+        uint8_t token[MEOWKEY_MANAGER_AUTH_TOKEN_SIZE];
+        meowkey_user_presence_config_t config;
+        bool updated;
+        const char *scope;
+
+        if (!parse_user_presence_update_request(request_payload, payload_length, token, &config)) {
+            send_response(MEOWKEY_MANAGER_STATUS_INVALID_REQUEST, command, NULL, 0u);
+            break;
+        }
+
+        if (!manager_auth_verify(token, MEOWKEY_MANAGER_PERMISSION_USER_PRESENCE_WRITE)) {
+            send_response(MEOWKEY_MANAGER_STATUS_AUTH_REQUIRED, command, NULL, 0u);
+            break;
+        }
+
+        updated = command == MEOWKEY_MANAGER_CMD_SET_USER_PRESENCE_PERSISTED
+            ? meowkey_user_presence_set_config(&config)
+            : meowkey_user_presence_set_session_config(&config);
+        if (!updated) {
+            send_response(MEOWKEY_MANAGER_STATUS_INVALID_REQUEST, command, NULL, 0u);
+            break;
+        }
+
+        scope = command == MEOWKEY_MANAGER_CMD_SET_USER_PRESENCE_PERSISTED ? "persisted" : "session";
+        response_length = build_user_presence_write_json(response_payload, sizeof(response_payload), scope, true);
+        if (response_length == 0u) {
+            send_response(MEOWKEY_MANAGER_STATUS_INTERNAL_ERROR, command, NULL, 0u);
+        } else {
+            send_response(MEOWKEY_MANAGER_STATUS_OK, command, response_payload, response_length);
+        }
+        break;
+    }
+
+    case MEOWKEY_MANAGER_CMD_CLEAR_USER_PRESENCE_SESSION: {
+        uint8_t token[MEOWKEY_MANAGER_AUTH_TOKEN_SIZE];
+
+        if (!parse_user_presence_clear_request(request_payload, payload_length, token)) {
+            send_response(MEOWKEY_MANAGER_STATUS_INVALID_REQUEST, command, NULL, 0u);
+            break;
+        }
+
+        if (!manager_auth_verify(token, MEOWKEY_MANAGER_PERMISSION_USER_PRESENCE_WRITE)) {
+            send_response(MEOWKEY_MANAGER_STATUS_AUTH_REQUIRED, command, NULL, 0u);
+            break;
+        }
+
+        meowkey_user_presence_clear_session_config();
+        response_length = build_user_presence_write_json(response_payload, sizeof(response_payload), "session-clear", true);
+        if (response_length == 0u) {
+            send_response(MEOWKEY_MANAGER_STATUS_INTERNAL_ERROR, command, NULL, 0u);
+        } else {
+            send_response(MEOWKEY_MANAGER_STATUS_OK, command, response_payload, response_length);
+        }
+        break;
+    }
 
     default:
         send_response(MEOWKEY_MANAGER_STATUS_UNSUPPORTED_COMMAND, command, NULL, 0u);

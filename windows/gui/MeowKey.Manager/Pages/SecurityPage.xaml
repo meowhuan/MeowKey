@@ -80,6 +80,99 @@
                 </StackPanel>
             </Border>
 
+            <Border Style="{StaticResource SectionCardStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock x:Name="ManageUpTitleText" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock x:Name="ManageUpDescriptionText"
+                               Foreground="{ThemeResource AppMutedForegroundBrush}"
+                               TextWrapping="WrapWholeWords" />
+
+                    <Grid ColumnSpacing="12" RowSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock x:Name="UpSourceLabelText"
+                                   Grid.Row="0"
+                                   Grid.Column="0"
+                                   VerticalAlignment="Center"
+                                   Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                        <ComboBox x:Name="UpSourceCombo"
+                                  Grid.Row="0"
+                                  Grid.Column="1">
+                            <ComboBoxItem x:Name="UpSourceNoneItem" />
+                            <ComboBoxItem x:Name="UpSourceBootselItem" />
+                            <ComboBoxItem x:Name="UpSourceGpioItem" />
+                        </ComboBox>
+
+                        <TextBlock x:Name="UpGpioPinLabelText"
+                                   Grid.Row="1"
+                                   Grid.Column="0"
+                                   VerticalAlignment="Center"
+                                   Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                        <TextBox x:Name="UpGpioPinTextBox"
+                                 Grid.Row="1"
+                                 Grid.Column="1" />
+
+                        <TextBlock x:Name="UpTapCountLabelText"
+                                   Grid.Row="2"
+                                   Grid.Column="0"
+                                   VerticalAlignment="Center"
+                                   Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                        <TextBox x:Name="UpTapCountTextBox"
+                                 Grid.Row="2"
+                                 Grid.Column="1" />
+
+                        <TextBlock x:Name="UpGestureWindowLabelText"
+                                   Grid.Row="3"
+                                   Grid.Column="0"
+                                   VerticalAlignment="Center"
+                                   Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                        <TextBox x:Name="UpGestureWindowTextBox"
+                                 Grid.Row="3"
+                                 Grid.Column="1" />
+
+                        <TextBlock x:Name="UpRequestTimeoutLabelText"
+                                   Grid.Row="4"
+                                   Grid.Column="0"
+                                   VerticalAlignment="Center"
+                                   Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                        <TextBox x:Name="UpRequestTimeoutTextBox"
+                                 Grid.Row="4"
+                                 Grid.Column="1" />
+
+                        <TextBlock x:Name="UpActiveLowLabelText"
+                                   Grid.Row="5"
+                                   Grid.Column="0"
+                                   VerticalAlignment="Center"
+                                   Foreground="{ThemeResource AppMutedForegroundBrush}" />
+                        <CheckBox x:Name="UpActiveLowCheckBox"
+                                  Grid.Row="5"
+                                  Grid.Column="1" />
+                    </Grid>
+
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="ApplyPersistedUpButton"
+                                Click="OnApplyPersistedUserPresence" />
+                        <Button x:Name="ApplySessionUpButton"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Click="OnApplySessionUserPresence" />
+                        <Button x:Name="ClearSessionOverrideButton"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Click="OnClearSessionOverride" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
             <ItemsControl ItemsSource="{x:Bind Snapshot.SecurityPolicies}">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="models:PolicyItem">

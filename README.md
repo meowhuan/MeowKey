@@ -47,6 +47,15 @@ Windows hardened build without Debug HID:
 powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -BuildDir build-hardened -NoPicotool -IgnoreGitGlobalConfig -DisableDebugHid
 ```
 
+Windows hardened build with manager read-auth gate and simulated secure-element software wrapping:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 `
+  -BuildDir build-hardened-simse `
+  -DisableDebugHid `
+  -ManagerSummaryAuth on
+```
+
 Windows hardened build with signed boot and anti-rollback metadata:
 
 ```powershell
@@ -78,6 +87,7 @@ Linux flashing:
 Notes:
 
 - `-NoPicotool` skips `UF2` output and keeps the build offline-friendly.
+- `scripts/build.ps1` now enables simulated secure-element wrapping by default; use `-EnableSimulatedSecureElement:$false` if you explicitly need to disable it.
 - Keep `-IgnoreGitGlobalConfig` if your machine has a broken global proxy setup.
 - Release archives also include `flash.ps1` and `flash.sh`.
 
@@ -104,7 +114,7 @@ cd .\native-rs\meowkey-manager
 cargo run
 ```
 
-The browser UI still depends on Debug HID. The Rust shell can now read the formal management channel for inventory and posture, but its CTAP bring-up, diagnostics, and destructive maintenance flows still depend on Debug HID. The WinUI shell is now the primary Windows manager surface, and it still reflects the current protocol boundary instead of pretending that full end-user credential administration already exists.
+The browser UI still depends on Debug HID. The Rust shell can now read the formal management channel for inventory and posture, but its CTAP bring-up, diagnostics, and destructive maintenance flows still depend on Debug HID. The WinUI shell is now the primary Windows manager surface, and it can execute per-credential delete plus user-presence writes on the formal channel with local-UP-gated short-lived authorization.
 
 ### Probe and Presets
 
@@ -173,6 +183,8 @@ Treat the preset name as the real long-term identifier. The shopping link is onl
 - Hardened builds disable Debug HID and are the better default for redistribution.
 - The Windows desktop manager now lives in `windows/gui/MeowKey.Manager/` and is organized around management sections instead of protocol test panels.
 - The Linux desktop surface currently stays on Rust + egui/eframe so the existing cross-platform backend can keep moving without a second native toolkit migration.
+- Hardened builds now default to requiring short-lived manager authorization for credential-summary reads; debug builds keep read-path friction lower for bring-up.
+- The optional simulated secure-element mode adds software-only secret wrapping semantics for credential secrets; it does **not** create a hardware secure-element boundary.
 - `clientPIN` currently implements the older `getPinToken` flow, not permission-scoped tokens.
 - Runtime `pinUvAuthToken` is session-only and short-lived.
 - The default `meowkey_rp2350_usb` user-presence source is `BOOTSEL` with a double-tap gesture.
@@ -228,6 +240,15 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -BuildDir build -No
 powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -BuildDir build-hardened -NoPicotool -IgnoreGitGlobalConfig -DisableDebugHid
 ```
 
+启用管理读授权门控与模拟安全元件软件封装的硬化构建：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 `
+  -BuildDir build-hardened-simse `
+  -DisableDebugHid `
+  -ManagerSummaryAuth on
+```
+
 启用 signed boot 与 anti-rollback metadata 的硬化构建：
 
 ```powershell
@@ -259,6 +280,7 @@ Linux 刷写：
 补充说明：
 
 - `-NoPicotool` 会跳过 `UF2` 生成，更适合离线开发检查。
+- `scripts/build.ps1` 现在默认启用“模拟安全元件”软件封装；若要显式关闭，可传 `-EnableSimulatedSecureElement:$false`。
 - 如果你的全局 Git 代理配置有问题，继续保留 `-IgnoreGitGlobalConfig`。
 - release 压缩包里同样会附带 `flash.ps1` 与 `flash.sh`。
 
@@ -285,7 +307,7 @@ cd .\native-rs\meowkey-manager
 cargo run
 ```
 
-浏览器调试台仍然依赖 Debug HID。Rust 壳层现在已经能读取正式管理通道里的 inventory / posture 数据，但它的 CTAP bring-up、诊断和破坏性维护动作仍然依赖 Debug HID。WinUI 壳层现在是 Windows 主管理界面，但它会如实反映当前协议边界，不会把尚未实现的凭据管理能力包装成“已经可用”。
+浏览器调试台仍然依赖 Debug HID。Rust 壳层现在已经能读取正式管理通道里的 inventory / posture 数据，但它的 CTAP bring-up、诊断和破坏性维护动作仍然依赖 Debug HID。WinUI 壳层现在是 Windows 主管理界面，并且已经能在正式管理通道上执行单条凭据删除与 user presence 写入（带本地在场确认和短时授权）。
 
 ### Probe 与预设
 
@@ -354,6 +376,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1
 - `hardened` 构建会关闭 Debug HID，更适合作为分发基线。
 - Windows 桌面管理器现在位于 `windows/gui/MeowKey.Manager/`，信息架构已经按真正管理器而不是协议测试面板来组织。
 - Linux 桌面面暂时继续使用 Rust + egui/eframe，这样可以复用现有跨平台后端并避免再引入一套新的原生桌面栈。
+- `hardened` 构建现在默认要求短时管理授权后才能读取正式凭据摘要；`debug` 构建仍保留更低摩擦的 bring-up 读取路径。
+- 可选的“模拟安全元件”模式会增加软件级别的 secret wrapping 语义，但这**不等于**硬件安全元件边界。
 - `clientPIN` 当前只实现旧式 `getPinToken`，没有权限范围 token。
 - 运行时 `pinUvAuthToken` 只存在于当前会话，且生命周期较短。
 - `meowkey_rp2350_usb` 当前默认的 user presence 来源是双击 `BOOTSEL`。
