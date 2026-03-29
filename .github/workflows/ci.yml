@@ -194,6 +194,7 @@ jobs:
             -PfxPath $driverPfxPath `
             -PfxPassword $pfxPassword `
             -TimestampUrl "http://timestamp.digicert.com" `
+            -SkipCatalogVerification `
             -SkipCatalogGeneration
           if ($LASTEXITCODE -ne 0) {
             throw "sign-manager-driver.ps1 failed with exit code $LASTEXITCODE."

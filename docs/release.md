@@ -67,6 +67,7 @@ For the WinUI manager driver package, release-time signing also expects:
 
 `MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_B64` must be the base64-encoded `.pfx` payload for your trusted code-signing certificate private key. When provided, the workflow decodes it on the runner, re-generates the driver catalog from the current `INF`, and signs it during packaging.
 The workflow also applies an RFC3161 timestamp (`http://timestamp.digicert.com`) so the catalog remains valid after the signing certificate expires.
+Release signing does not rely on a pre-committed `.cat`; it regenerates the catalog (`Inf2Cat`, with `MakeCat` fallback) and verifies INF-to-catalog hash membership before packaging.
 
 Example commands:
 
@@ -233,6 +234,7 @@ Windows 上的桌面工具检查：
 
 其中 `MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_B64` 需要是受信任代码签名证书私钥 `.pfx` 内容的 base64 编码。配置后，workflow 会在 runner 上解码该证书，并在打包阶段基于当前 `INF` 重新生成驱动目录文件并签名。
 workflow 还会附加 RFC3161 时间戳（`http://timestamp.digicert.com`），避免签名证书过期后目录签名立即失效。
+发布流程不会依赖仓库里预置的 `.cat`，而是会在打包前重新生成目录文件（优先 `Inf2Cat`，回退 `MakeCat`），并校验 INF 与目录文件哈希匹配。
 
 示例命令：
 

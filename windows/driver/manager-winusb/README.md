@@ -32,6 +32,12 @@ If your environment does not include `Inf2Cat.exe`, you can sign the existing ca
 pwsh .\sign-manager-driver.ps1 -PfxPath .\driver-signing.pfx -PfxPassword "<password>" -TimestampUrl "http://timestamp.digicert.com" -SkipCatalogGeneration
 ```
 
+To avoid INF/CAT hash mismatch risks when `Inf2Cat.exe` is unavailable, you can ask the script to generate a fallback catalog via `MakeCat.exe`:
+
+```powershell
+pwsh .\sign-manager-driver.ps1 -PfxPath .\driver-signing.pfx -PfxPassword "<password>" -TimestampUrl "http://timestamp.digicert.com" -UseMakeCatFallback
+```
+
 For downloaded ZIP packages, prefer:
 
 ```cmd
@@ -83,6 +89,12 @@ pwsh .\sign-manager-driver.ps1 -PfxPath .\driver-signing.pfx -PfxPassword "<pass
 
 ```powershell
 pwsh .\sign-manager-driver.ps1 -PfxPath .\driver-signing.pfx -PfxPassword "<password>" -TimestampUrl "http://timestamp.digicert.com" -SkipCatalogGeneration
+```
+
+如果环境里没有 `Inf2Cat.exe`，为避免 INF/CAT 哈希不匹配，建议用 `MakeCat.exe` 回退方案重新生成目录文件：
+
+```powershell
+pwsh .\sign-manager-driver.ps1 -PfxPath .\driver-signing.pfx -PfxPassword "<password>" -TimestampUrl "http://timestamp.digicert.com" -UseMakeCatFallback
 ```
 
 对于下载得到的 ZIP 包，建议优先运行：

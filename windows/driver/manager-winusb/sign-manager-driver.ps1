@@ -3,6 +3,8 @@ param(
     [string]$PfxPath = "",
     [string]$PfxPassword = "",
     [string]$TimestampUrl = "",
+    [switch]$UseMakeCatFallback,
+    [switch]$SkipCatalogVerification,
     [switch]$SkipCatalogGeneration
 )
 
@@ -62,11 +64,52 @@ $signtoolPath = Get-WindowsKitBinary -FileName "signtool.exe" -Architectures @("
 if ($SkipCatalogGeneration) {
     Write-Host "[driver] skipping catalog generation"
 } else {
-    $inf2catPath = Get-WindowsKitBinary -FileName "Inf2Cat.exe" -Architectures @("x86", "x64", "arm64")
-    Write-Host "[driver] generating catalog"
-    & $inf2catPath /driver:$driverDir /os:10_X64
-    if ($LASTEXITCODE -ne 0) {
-        throw "Inf2Cat failed with exit code $LASTEXITCODE."
+    $inf2catPath = $null
+    try {
+        $inf2catPath = Get-WindowsKitBinary -FileName "Inf2Cat.exe" -Architectures @("x86", "x64", "arm64")
+    } catch {
+        if (-not $UseMakeCatFallback) {
+            throw
+        }
+        Write-Host "[driver] Inf2Cat.exe not found, attempting MakeCat fallback"
+    }
+
+    if (Test-Path $catPath) {
+        Remove-Item -Force $catPath
+    }
+
+    if ($inf2catPath) {
+        Write-Host "[driver] generating catalog via Inf2Cat"
+        & $inf2catPath /driver:$driverDir /os:10_X64
+        if ($LASTEXITCODE -ne 0) {
+            throw "Inf2Cat failed with exit code $LASTEXITCODE."
+        }
+    } else {
+        $makecatPath = Get-WindowsKitBinary -FileName "MakeCat.exe" -Architectures @("x86", "x64", "arm64")
+        $cdfPath = Join-Path $driverDir "meowkey-manager-winusb.cdf"
+        $cdfContent = @"
+[CatalogHeader]
+Name=meowkey-manager-winusb.cat
+ResultDir=.
+PublicVersion=0x0000001
+EncodingType=0x00010001
+CATATTR1=0x10010001:OSAttr:2:10.0
+
+[CatalogFiles]
+<hash>meowkey-manager-winusb.inf=meowkey-manager-winusb.inf
+"@
+        Set-Content -Path $cdfPath -Value $cdfContent -Encoding ASCII
+        try {
+            Push-Location $driverDir
+            & $makecatPath /v meowkey-manager-winusb.cdf
+            if ($LASTEXITCODE -ne 0) {
+                throw "MakeCat failed with exit code $LASTEXITCODE."
+            }
+        } finally {
+            Pop-Location
+            Remove-Item -Force $cdfPath -ErrorAction SilentlyContinue
+        }
+        Write-Warning "[driver] catalog generated via MakeCat fallback; Inf2Cat is preferred for INF driver packages."
     }
 }
 
@@ -99,4 +142,20 @@ if ($PfxPath) {
 }
 if ($LASTEXITCODE -ne 0) {
     throw "signtool failed with exit code $LASTEXITCODE."
+}
+
+if ($SkipCatalogVerification) {
+    Write-Host "[driver] skipping post-sign catalog verification"
+} else {
+    Write-Host "[driver] verifying catalog signature"
+    & $signtoolPath verify /v /pa $catPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "signtool verify failed for catalog signature with exit code $LASTEXITCODE."
+    }
+
+    Write-Host "[driver] verifying INF hash membership in catalog"
+    & $signtoolPath verify /v /pa /c $catPath $infPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "signtool verify failed for INF catalog membership with exit code $LASTEXITCODE."
+    }
 }
