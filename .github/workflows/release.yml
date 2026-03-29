@@ -161,6 +161,8 @@ jobs:
           Write-Host "[driver] catalog signature status: $($driverSignature.Status)"
           if ($driverSignature.Status -eq "NotSigned") {
             throw "Driver catalog is still unsigned after sign-manager-driver.ps1."
+          } elseif ($driverSignature.Status -eq "UnknownError") {
+            Write-Host "[driver] catalog signature status is UnknownError on this runner (commonly untrusted root in CI). Installer will import bundled signer certificate on target machines."
           }
 
       - uses: actions/upload-artifact@v4

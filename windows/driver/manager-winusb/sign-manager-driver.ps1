@@ -157,10 +157,31 @@ if ($LASTEXITCODE -ne 0) {
 if ($SkipCatalogVerification) {
     Write-Host "[driver] skipping post-sign catalog verification"
 } else {
+    function Test-InfHashMembershipInCatalog {
+        param(
+            [Parameter(Mandatory = $true)]
+            [string]$CatalogPath,
+            [Parameter(Mandatory = $true)]
+            [string]$InfFilePath
+        )
+
+        $certutilPath = Join-Path $env:WINDIR "System32\certutil.exe"
+        if (-not (Test-Path $certutilPath)) {
+            throw "certutil.exe not found at expected path: $certutilPath"
+        }
+
+        $infHash = (Get-FileHash -Path $InfFilePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $dump = & $certutilPath -dump $CatalogPath 2>&1
+        $dumpText = ($dump | ForEach-Object { $_.ToString() }) -join "`n"
+        $dumpText = $dumpText.ToLowerInvariant()
+        return $dumpText.Contains($infHash)
+    }
+
     function Invoke-SignToolVerify {
         param(
             [string[]]$VerifyArgs,
-            [string]$Context
+            [string]$Context,
+            [switch]$CheckInfMembershipOnUntrustedRoot
         )
 
         $previousErrorActionPreference = $ErrorActionPreference
@@ -192,11 +213,20 @@ if ($SkipCatalogVerification) {
 
         $verifyText = ($verifyOutput | ForEach-Object { $_.ToString() }) -join "`n"
         $hasUntrustedRoot = $verifyText -match 'not trusted by the trust provider|CERT_E_UNTRUSTEDROOT|0x800B0109|terminated in a root certificate'
-        $hasCatalogHashMismatch = $verifyText -match 'hash value.*catalog|not in the specified catalog|specified catalog file|catalog.*invalid|TRUST_E_BAD_DIGEST|0x80096010'
+        $hasCatalogHashMismatch = $verifyText -match 'hash value.*catalog|not in the specified catalog|specified catalog file|catalog.*invalid|TRUST_E_BAD_DIGEST|0x80096010|file not valid'
 
         if ($AllowUntrustedRootVerification -and $hasUntrustedRoot -and -not $hasCatalogHashMismatch) {
-            Write-Warning "[driver] $Context verification reported an untrusted root on this runner. Continuing due to -AllowUntrustedRootVerification. Target machines must trust the signer certificate."
-            return
+            if ($CheckInfMembershipOnUntrustedRoot) {
+                $inCatalog = Test-InfHashMembershipInCatalog -CatalogPath $catPath -InfFilePath $infPath
+                if ($inCatalog) {
+                    Write-Warning "[driver] $Context verification reported an untrusted root on this runner. Hash membership confirmed via certutil dump; continuing due to -AllowUntrustedRootVerification."
+                    return
+                }
+                throw "Catalog hash membership check failed: $infPath hash is not present in $catPath."
+            } else {
+                Write-Warning "[driver] $Context verification reported an untrusted root on this runner. Continuing due to -AllowUntrustedRootVerification. Target machines must trust the signer certificate."
+                return
+            }
         }
 
         throw "signtool verify failed for $Context with exit code $verifyExitCode."
@@ -206,5 +236,5 @@ if ($SkipCatalogVerification) {
     Invoke-SignToolVerify -VerifyArgs @("verify", "/v", "/pa", $catPath) -Context "catalog signature"
 
     Write-Host "[driver] verifying INF hash membership in catalog"
-    Invoke-SignToolVerify -VerifyArgs @("verify", "/v", "/pa", "/c", $catPath, $infPath) -Context "INF catalog membership"
+    Invoke-SignToolVerify -VerifyArgs @("verify", "/v", "/pa", "/c", $catPath, $infPath) -Context "INF catalog membership" -CheckInfMembershipOnUntrustedRoot
 }
