@@ -69,6 +69,7 @@ For the WinUI manager driver package, release-time signing also expects:
 The workflow also applies an RFC3161 timestamp (`http://timestamp.digicert.com`) so the catalog remains valid after the signing certificate expires.
 Release signing does not rely on a pre-committed `.cat`; it regenerates the catalog (`Inf2Cat`, with `MakeCat` fallback) and verifies INF-to-catalog hash membership before packaging.
 The workflow exports and bundles `meowkey-manager-winusb.cer` from the signing certificate. If you use a private/self-signed root, users must trust that certificate chain before driver install.
+To avoid false failures on hosted runners with untrusted private roots, release currently skips strict post-sign trust-chain verification in CI and relies on target-machine certificate trust during install.
 
 Example commands:
 
@@ -238,6 +239,7 @@ Windows 上的桌面工具检查：
 workflow 还会附加 RFC3161 时间戳（`http://timestamp.digicert.com`），避免签名证书过期后目录签名立即失效。
 发布流程不会依赖仓库里预置的 `.cat`，而是会在打包前重新生成目录文件（优先 `Inf2Cat`，回退 `MakeCat`），并校验 INF 与目录文件哈希匹配。
 workflow 会从签名证书导出并打包 `meowkey-manager-winusb.cer`。如果你使用私有 CA 或自签名证书，用户侧仍需先信任该证书链才能安装驱动。
+为避免托管 runner 上私有根证书不受信任导致的误报，release 当前在 CI 中跳过严格的签后信任链校验，安装阶段以目标机器证书信任结果为准。
 
 示例命令：
 

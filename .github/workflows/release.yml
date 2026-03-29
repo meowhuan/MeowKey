@@ -147,7 +147,7 @@ jobs:
             "-TimestampUrl", "http://timestamp.digicert.com",
             "-ExportSignerCertificatePath", $driverCerPath,
             "-UseMakeCatFallback",
-            "-AllowUntrustedRootVerification"
+            "-SkipCatalogVerification"
           )
           powershell @signArgs
           if ($LASTEXITCODE -ne 0) {
