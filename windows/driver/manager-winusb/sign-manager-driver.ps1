@@ -2,6 +2,7 @@ param(
     [string]$CertSubject = "CN=MeowKey Manager Driver Test",
     [string]$PfxPath = "",
     [string]$PfxPassword = "",
+    [string]$TimestampUrl = "",
     [switch]$SkipCatalogGeneration
 )
 
@@ -83,10 +84,18 @@ if ($PfxPath) {
     if ($PfxPassword) {
         $signArgs += @("/p", $PfxPassword)
     }
+    if (-not [string]::IsNullOrWhiteSpace($TimestampUrl)) {
+        $signArgs += @("/tr", $TimestampUrl, "/td", "SHA256")
+    }
     $signArgs += $catPath
     & $signtoolPath @signArgs
 } else {
-    & $signtoolPath sign /fd SHA256 /n $CertSubject $catPath
+    $signArgs = @("sign", "/fd", "SHA256", "/n", $CertSubject)
+    if (-not [string]::IsNullOrWhiteSpace($TimestampUrl)) {
+        $signArgs += @("/tr", $TimestampUrl, "/td", "SHA256")
+    }
+    $signArgs += $catPath
+    & $signtoolPath @signArgs
 }
 if ($LASTEXITCODE -ne 0) {
     throw "signtool failed with exit code $LASTEXITCODE."

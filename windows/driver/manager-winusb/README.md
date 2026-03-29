@@ -8,6 +8,7 @@ Files:
 
 - `meowkey-manager-winusb.inf`
 - `install-manager-driver.ps1`
+- `install-manager-driver.cmd`
 - `new-manager-driver-cert.ps1`
 - `sign-manager-driver.ps1`
 
@@ -22,13 +23,25 @@ pwsh .\install-manager-driver.ps1
 CI/release signing with a PFX is also supported:
 
 ```powershell
-pwsh .\sign-manager-driver.ps1 -PfxPath .\driver-signing.pfx -PfxPassword "<password>"
+pwsh .\sign-manager-driver.ps1 -PfxPath .\driver-signing.pfx -PfxPassword "<password>" -TimestampUrl "http://timestamp.digicert.com"
 ```
 
 If your environment does not include `Inf2Cat.exe`, you can sign the existing catalog without regeneration:
 
 ```powershell
-pwsh .\sign-manager-driver.ps1 -PfxPath .\driver-signing.pfx -PfxPassword "<password>" -SkipCatalogGeneration
+pwsh .\sign-manager-driver.ps1 -PfxPath .\driver-signing.pfx -PfxPassword "<password>" -TimestampUrl "http://timestamp.digicert.com" -SkipCatalogGeneration
+```
+
+For downloaded ZIP packages, prefer:
+
+```cmd
+install-manager-driver.cmd
+```
+
+If PowerShell reports that `install-manager-driver.ps1` is not digitally signed, remove Mark-of-the-Web metadata first:
+
+```powershell
+Get-ChildItem -Recurse -File | Unblock-File
 ```
 
 Important:
@@ -48,6 +61,7 @@ The desktop manager enumerates the interface GUID:
 
 - `meowkey-manager-winusb.inf`
 - `install-manager-driver.ps1`
+- `install-manager-driver.cmd`
 - `new-manager-driver-cert.ps1`
 - `sign-manager-driver.ps1`
 
@@ -62,13 +76,25 @@ pwsh .\install-manager-driver.ps1
 也支持在 CI/release 中使用 PFX 签名：
 
 ```powershell
-pwsh .\sign-manager-driver.ps1 -PfxPath .\driver-signing.pfx -PfxPassword "<password>"
+pwsh .\sign-manager-driver.ps1 -PfxPath .\driver-signing.pfx -PfxPassword "<password>" -TimestampUrl "http://timestamp.digicert.com"
 ```
 
 如果环境里没有 `Inf2Cat.exe`，也可以跳过重建目录文件，仅对现有目录文件签名：
 
 ```powershell
-pwsh .\sign-manager-driver.ps1 -PfxPath .\driver-signing.pfx -PfxPassword "<password>" -SkipCatalogGeneration
+pwsh .\sign-manager-driver.ps1 -PfxPath .\driver-signing.pfx -PfxPassword "<password>" -TimestampUrl "http://timestamp.digicert.com" -SkipCatalogGeneration
+```
+
+对于下载得到的 ZIP 包，建议优先运行：
+
+```cmd
+install-manager-driver.cmd
+```
+
+如果 PowerShell 提示 `install-manager-driver.ps1` 未数字签名，先移除下载来源标记（Mark-of-the-Web）：
+
+```powershell
+Get-ChildItem -Recurse -File | Unblock-File
 ```
 
 注意：

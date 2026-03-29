@@ -193,6 +193,7 @@ jobs:
           powershell -ExecutionPolicy Bypass -File .\windows\driver\manager-winusb\sign-manager-driver.ps1 `
             -PfxPath $driverPfxPath `
             -PfxPassword $pfxPassword `
+            -TimestampUrl "http://timestamp.digicert.com" `
             -SkipCatalogGeneration
           if ($LASTEXITCODE -ne 0) {
             throw "sign-manager-driver.ps1 failed with exit code $LASTEXITCODE."

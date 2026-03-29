@@ -162,7 +162,8 @@ jobs:
             "-ExecutionPolicy", "Bypass",
             "-File", ".\windows\driver\manager-winusb\sign-manager-driver.ps1",
             "-PfxPath", $driverPfxPath,
-            "-PfxPassword", $env:MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_PASSWORD
+            "-PfxPassword", $env:MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_PASSWORD,
+            "-TimestampUrl", "http://timestamp.digicert.com"
           )
           if ($skipCatalogGeneration) {
             $signArgs += "-SkipCatalogGeneration"
