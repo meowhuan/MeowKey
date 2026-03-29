@@ -134,3 +134,99 @@ jobs:
 
       - name: Build manager attack harness
         run: dotnet build tests/manager-attack-harness/ManagerAttackHarness.csproj -c Release
+
+  manager-winui-signed-package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Sign driver and package WinUI manager
+        shell: powershell
+        env:
+          MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_B64: ${{ secrets.MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_B64 }}
+          MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_PASSWORD: ${{ secrets.MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $tag = "ci-$env:GITHUB_RUN_NUMBER"
+          $version = "0.0.0-ci"
+          $distDir = Join-Path $PWD "dist-ci-signed-winui"
+          $publishDir = Join-Path $env:RUNNER_TEMP "meowkey-manager-winui-publish"
+          $packageDir = Join-Path $env:RUNNER_TEMP "meowkey-$tag-manager-winui"
+          $zipPath = Join-Path $distDir "meowkey-$tag-manager-winui.zip"
+          $driverDir = Join-Path $PWD "windows\driver\manager-winusb"
+          $driverPfxPath = Join-Path $env:RUNNER_TEMP "meowkey-manager-driver-signing-ci.pfx"
+          $driverCatPath = Join-Path $driverDir "meowkey-manager-winusb.cat"
+
+          $pfxBase64 = ($env:MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_B64 -replace '\s', '')
+          $pfxPassword = $env:MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_PASSWORD
+
+          if ([string]::IsNullOrWhiteSpace($pfxBase64)) {
+            Write-Host "[ci] signing secrets not configured; generating temporary self-signed PFX for pipeline verification."
+            $pfxPassword = "MeowKeyCI"
+            $cert = New-SelfSignedCertificate `
+              -Type CodeSigningCert `
+              -Subject "CN=MeowKey CI Driver Test" `
+              -KeyAlgorithm RSA `
+              -KeyLength 2048 `
+              -HashAlgorithm SHA256 `
+              -CertStoreLocation "Cert:\CurrentUser\My"
+            $securePassword = ConvertTo-SecureString $pfxPassword -AsPlainText -Force
+            Export-PfxCertificate -Cert $cert -FilePath $driverPfxPath -Password $securePassword | Out-Null
+          } else {
+            if ([string]::IsNullOrWhiteSpace($pfxPassword)) {
+              throw "MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_PASSWORD is empty while PFX_B64 is configured."
+            }
+            try {
+              $pfxBytes = [System.Convert]::FromBase64String($pfxBase64)
+            } catch {
+              throw "MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_B64 is not valid base64."
+            }
+            [System.IO.File]::WriteAllBytes($driverPfxPath, $pfxBytes)
+            Write-Host "[ci] decoded PFX bytes: $($pfxBytes.Length)"
+          }
+
+          powershell -ExecutionPolicy Bypass -File .\windows\driver\manager-winusb\sign-manager-driver.ps1 `
+            -PfxPath $driverPfxPath `
+            -PfxPassword $pfxPassword
+
+          if (-not (Test-Path $driverCatPath)) {
+            throw "Driver catalog missing after signing: $driverCatPath"
+          }
+          $driverSignature = Get-AuthenticodeSignature $driverCatPath
+          Write-Host "[ci] driver catalog signature status: $($driverSignature.Status)"
+          if ($driverSignature.Status -eq "NotSigned") {
+            throw "Driver catalog is still unsigned after signing."
+          }
+
+          dotnet publish windows/gui/MeowKey.Manager/MeowKey.Manager.csproj `
+            -c Release `
+            -p:ContinuousIntegrationBuild=true `
+            -p:Version=$version `
+            -o $publishDir
+
+          if (Test-Path $packageDir) {
+            Remove-Item -Recurse -Force $packageDir
+          }
+          New-Item -ItemType Directory -Path $packageDir | Out-Null
+          Copy-Item -Path "$publishDir\*" -Destination $packageDir -Recurse -Force
+          Copy-Item -Path "windows/gui/MeowKey.Manager/README.md" -Destination $packageDir -Force
+          $packageDriverDir = Join-Path $packageDir "windows\driver\manager-winusb"
+          New-Item -ItemType Directory -Path $packageDriverDir -Force | Out-Null
+          Copy-Item -Path "$driverDir\*" -Destination $packageDriverDir -Recurse -Force
+
+          if (Test-Path $zipPath) {
+            Remove-Item -Force $zipPath
+          }
+          New-Item -ItemType Directory -Path $distDir -Force | Out-Null
+          Compress-Archive -Path $packageDir -DestinationPath $zipPath -CompressionLevel Optimal
+          Write-Host "[ci] packaged zip: $zipPath"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manager-winui-signed-ci-zip
+          path: dist-ci-signed-winui/*.zip
