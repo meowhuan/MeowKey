@@ -7,6 +7,8 @@ This package binds the MeowKey management interface (`USB\\VID_CAFE&PID_4005&MI_
 Files:
 
 - `meowkey-manager-winusb.inf`
+- `meowkey-manager-winusb.cat` (signed)
+- `meowkey-manager-winusb.cer` (optional, signer certificate)
 - `install-manager-driver.ps1`
 - `install-manager-driver.cmd`
 - `new-manager-driver-cert.ps1`
@@ -50,6 +52,8 @@ If PowerShell reports that `install-manager-driver.ps1` is not digitally signed,
 Get-ChildItem -Recurse -File | Unblock-File
 ```
 
+`install-manager-driver.ps1` must run as Administrator. If `meowkey-manager-winusb.cer` is present, the script imports it into `LocalMachine\Root` and `LocalMachine\TrustedPublisher` before `pnputil`.
+
 Important:
 
 - Right-click `INF` install only works when `meowkey-manager-winusb.cat` is properly signed and trusted on the current machine.
@@ -66,6 +70,8 @@ The desktop manager enumerates the interface GUID:
 包含文件：
 
 - `meowkey-manager-winusb.inf`
+- `meowkey-manager-winusb.cat`（已签名）
+- `meowkey-manager-winusb.cer`（可选，签名证书）
 - `install-manager-driver.ps1`
 - `install-manager-driver.cmd`
 - `new-manager-driver-cert.ps1`
@@ -108,6 +114,8 @@ install-manager-driver.cmd
 ```powershell
 Get-ChildItem -Recurse -File | Unblock-File
 ```
+
+`install-manager-driver.ps1` 需要在管理员权限下运行。如果包内存在 `meowkey-manager-winusb.cer`，脚本会在调用 `pnputil` 前自动导入到 `LocalMachine\Root` 和 `LocalMachine\TrustedPublisher`。
 
 注意：
 

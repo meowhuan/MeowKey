@@ -3,7 +3,9 @@ param(
     [string]$PfxPath = "",
     [string]$PfxPassword = "",
     [string]$TimestampUrl = "",
+    [string]$ExportSignerCertificatePath = "",
     [switch]$UseMakeCatFallback,
+    [switch]$AllowUntrustedRootVerification,
     [switch]$SkipCatalogVerification,
     [switch]$SkipCatalogGeneration
 )
@@ -132,6 +134,14 @@ if ($PfxPath) {
     }
     $signArgs += $catPath
     & $signtoolPath @signArgs
+
+    if (-not [string]::IsNullOrWhiteSpace($ExportSignerCertificatePath)) {
+        $flags = [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable
+        $signingCert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($PfxPath, $PfxPassword, $flags)
+        $signerCerBytes = $signingCert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
+        [System.IO.File]::WriteAllBytes($ExportSignerCertificatePath, $signerCerBytes)
+        Write-Host "[driver] exported signer certificate: $ExportSignerCertificatePath"
+    }
 } else {
     $signArgs = @("sign", "/fd", "SHA256", "/n", $CertSubject)
     if (-not [string]::IsNullOrWhiteSpace($TimestampUrl)) {
@@ -147,15 +157,34 @@ if ($LASTEXITCODE -ne 0) {
 if ($SkipCatalogVerification) {
     Write-Host "[driver] skipping post-sign catalog verification"
 } else {
-    Write-Host "[driver] verifying catalog signature"
-    & $signtoolPath verify /v /pa $catPath
-    if ($LASTEXITCODE -ne 0) {
-        throw "signtool verify failed for catalog signature with exit code $LASTEXITCODE."
+    function Invoke-SignToolVerify {
+        param(
+            [string[]]$VerifyArgs,
+            [string]$Context
+        )
+
+        $verifyOutput = & $signtoolPath @VerifyArgs 2>&1
+        $verifyOutput | ForEach-Object { Write-Host $_ }
+        $verifyExitCode = $LASTEXITCODE
+        if ($verifyExitCode -eq 0) {
+            return
+        }
+
+        $verifyText = ($verifyOutput | ForEach-Object { $_.ToString() }) -join "`n"
+        $hasUntrustedRoot = $verifyText -match 'not trusted by the trust provider|CERT_E_UNTRUSTEDROOT|0x800B0109|terminated in a root certificate'
+        $hasCatalogHashMismatch = $verifyText -match 'hash value.*catalog|not in the specified catalog|specified catalog file|catalog.*invalid|TRUST_E_BAD_DIGEST|0x80096010'
+
+        if ($AllowUntrustedRootVerification -and $hasUntrustedRoot -and -not $hasCatalogHashMismatch) {
+            Write-Warning "[driver] $Context verification reported an untrusted root on this runner. Continuing due to -AllowUntrustedRootVerification. Target machines must trust the signer certificate."
+            return
+        }
+
+        throw "signtool verify failed for $Context with exit code $verifyExitCode."
     }
 
+    Write-Host "[driver] verifying catalog signature"
+    Invoke-SignToolVerify -VerifyArgs @("verify", "/v", "/pa", $catPath) -Context "catalog signature"
+
     Write-Host "[driver] verifying INF hash membership in catalog"
-    & $signtoolPath verify /v /pa /c $catPath $infPath
-    if ($LASTEXITCODE -ne 0) {
-        throw "signtool verify failed for INF catalog membership with exit code $LASTEXITCODE."
-    }
+    Invoke-SignToolVerify -VerifyArgs @("verify", "/v", "/pa", "/c", $catPath, $infPath) -Context "INF catalog membership"
 }

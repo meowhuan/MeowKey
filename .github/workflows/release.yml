@@ -116,6 +116,7 @@ jobs:
           $driverDir = Join-Path $PWD "windows\driver\manager-winusb"
           $driverInfPath = Join-Path $driverDir "meowkey-manager-winusb.inf"
           $driverCatPath = Join-Path $driverDir "meowkey-manager-winusb.cat"
+          $driverCerPath = Join-Path $driverDir "meowkey-manager-winusb.cer"
           $driverPfxPath = Join-Path $env:RUNNER_TEMP "meowkey-manager-driver-signing.pfx"
 
           if (-not (Test-Path $driverInfPath)) {
@@ -144,7 +145,9 @@ jobs:
             "-PfxPath", $driverPfxPath,
             "-PfxPassword", $env:MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_PASSWORD,
             "-TimestampUrl", "http://timestamp.digicert.com",
-            "-UseMakeCatFallback"
+            "-ExportSignerCertificatePath", $driverCerPath,
+            "-UseMakeCatFallback",
+            "-AllowUntrustedRootVerification"
           )
           powershell @signArgs
           if ($LASTEXITCODE -ne 0) {
