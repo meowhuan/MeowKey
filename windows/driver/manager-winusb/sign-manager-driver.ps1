@@ -163,9 +163,29 @@ if ($SkipCatalogVerification) {
             [string]$Context
         )
 
-        $verifyOutput = & $signtoolPath @VerifyArgs 2>&1
+        $previousErrorActionPreference = $ErrorActionPreference
+        $hasNativePref = $null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)
+        $previousNativePref = $null
+        if ($hasNativePref) {
+            $previousNativePref = $PSNativeCommandUseErrorActionPreference
+        }
+
+        try {
+            # Prevent signtool stderr lines from being raised as terminating PowerShell errors.
+            $ErrorActionPreference = "Continue"
+            if ($hasNativePref) {
+                $PSNativeCommandUseErrorActionPreference = $false
+            }
+            $verifyOutput = & $signtoolPath @VerifyArgs 2>&1
+            $verifyExitCode = $LASTEXITCODE
+        } finally {
+            if ($hasNativePref) {
+                $PSNativeCommandUseErrorActionPreference = $previousNativePref
+            }
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+
         $verifyOutput | ForEach-Object { Write-Host $_ }
-        $verifyExitCode = $LASTEXITCODE
         if ($verifyExitCode -eq 0) {
             return
         }
