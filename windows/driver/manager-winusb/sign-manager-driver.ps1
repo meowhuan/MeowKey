@@ -170,11 +170,13 @@ if ($SkipCatalogVerification) {
             throw "certutil.exe not found at expected path: $certutilPath"
         }
 
-        $infHash = (Get-FileHash -Path $InfFilePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $infSha256 = (Get-FileHash -Path $InfFilePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $infSha1 = (Get-FileHash -Path $InfFilePath -Algorithm SHA1).Hash.ToLowerInvariant()
         $dump = & $certutilPath -dump $CatalogPath 2>&1
         $dumpText = ($dump | ForEach-Object { $_.ToString() }) -join "`n"
         $dumpText = $dumpText.ToLowerInvariant()
-        return $dumpText.Contains($infHash)
+        $dumpHexOnly = [regex]::Replace($dumpText, '[^0-9a-f]', '')
+        return $dumpHexOnly.Contains($infSha256) -or $dumpHexOnly.Contains($infSha1)
     }
 
     function Invoke-SignToolVerify {
@@ -215,7 +217,7 @@ if ($SkipCatalogVerification) {
         $hasUntrustedRoot = $verifyText -match 'not trusted by the trust provider|CERT_E_UNTRUSTEDROOT|0x800B0109|terminated in a root certificate'
         $hasCatalogHashMismatch = $verifyText -match 'hash value.*catalog|not in the specified catalog|specified catalog file|catalog.*invalid|TRUST_E_BAD_DIGEST|0x80096010|file not valid'
 
-        if ($AllowUntrustedRootVerification -and $hasUntrustedRoot -and -not $hasCatalogHashMismatch) {
+        if ($AllowUntrustedRootVerification -and $hasUntrustedRoot) {
             if ($CheckInfMembershipOnUntrustedRoot) {
                 $inCatalog = Test-InfHashMembershipInCatalog -CatalogPath $catPath -InfFilePath $infPath
                 if ($inCatalog) {
@@ -223,7 +225,7 @@ if ($SkipCatalogVerification) {
                     return
                 }
                 throw "Catalog hash membership check failed: $infPath hash is not present in $catPath."
-            } else {
+            } elseif (-not $hasCatalogHashMismatch) {
                 Write-Warning "[driver] $Context verification reported an untrusted root on this runner. Continuing due to -AllowUntrustedRootVerification. Target machines must trust the signer certificate."
                 return
             }
