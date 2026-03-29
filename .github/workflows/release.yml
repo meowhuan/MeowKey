@@ -131,9 +131,10 @@ jobs:
           New-Item -ItemType Directory -Path $packageDir | Out-Null
           Copy-Item -Path "$publishDir\*" -Destination $packageDir -Recurse -Force
           Copy-Item -Path "windows/gui/MeowKey.Manager/README.md" -Destination $packageDir -Force
-          $driverDir = Join-Path $packageDir "driver"
+          $driverSourceDir = Join-Path $PWD "windows\driver\manager-winusb"
+          $driverDir = Join-Path $packageDir "windows\driver\manager-winusb"
           New-Item -ItemType Directory -Path $driverDir -Force | Out-Null
-          Copy-Item -Path "windows/driver/manager-winusb/meowkey-manager-winusb.cat" -Destination $driverDir -Force
+          Copy-Item -Path "$driverSourceDir\*" -Destination $driverDir -Recurse -Force
 
           if (Test-Path $zipPath) {
             Remove-Item -Force $zipPath

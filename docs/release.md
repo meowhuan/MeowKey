@@ -100,6 +100,7 @@ Manager WinUI archives include:
 
 - published WinUI desktop binaries (`win-x64`)
 - `README.md`
+- `windows/driver/manager-winusb/` driver package contents (INF/CAT/install script and related files)
 
 Manager Rust-Linux archives include:
 
@@ -257,6 +258,7 @@ WinUI 管理器压缩包包含：
 
 - 发布后的 WinUI 桌面二进制（`win-x64`）
 - `README.md`
+- `windows/driver/manager-winusb/` 驱动包内容（INF/CAT/安装脚本及相关文件）
 
 Rust-Linux 管理器压缩包包含：
 

@@ -161,6 +161,7 @@ Treat the preset name as the real long-term identifier. The shopping link is onl
 - [docs/release.md](docs/release.md): CI, packaging, and release workflow
 - [docs/security.md](docs/security.md): practical security boundaries and deployment guidance
 - [docs/security-model.md](docs/security-model.md): code-level security behavior
+- [docs/secure-firmware-flashing.md](docs/secure-firmware-flashing.md): secure firmware flashing checklist and verification flow
 - [CONTRIBUTING.md](CONTRIBUTING.md): contribution workflow
 - [SECURITY.md](SECURITY.md): reporting policy
 - [keys/README.md](keys/README.md): local secure-boot key directory
@@ -193,7 +194,7 @@ Treat the preset name as the real long-term identifier. The shopping link is onl
 - User-presence configuration persists in flash, so reflashing alone does not erase prior settings.
 - Sign-count persistence is journal-based now, which is better than whole-store rewrites but not the end state.
 
-Read [docs/security.md](docs/security.md) and [docs/release.md](docs/release.md) before publishing firmware archives for other users.
+Read [docs/security.md](docs/security.md), [docs/release.md](docs/release.md), and [docs/secure-firmware-flashing.md](docs/secure-firmware-flashing.md) before publishing firmware archives for other users.
 
 ## 中文
 
@@ -356,6 +357,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1
 - [docs/release.md](docs/release.md)：CI、打包和发布流程
 - [docs/security.md](docs/security.md)：实际安全边界与使用建议
 - [docs/security-model.md](docs/security-model.md)：代码级安全模型
+- [docs/secure-firmware-flashing.md](docs/secure-firmware-flashing.md)：安全固件刷入检查与验证流程
 - [CONTRIBUTING.md](CONTRIBUTING.md)：协作与提交前检查
 - [SECURITY.md](SECURITY.md)：安全问题报告方式
 - [keys/README.md](keys/README.md)：本地 secure boot 密钥目录
@@ -386,4 +388,4 @@ powershell -ExecutionPolicy Bypass -File .\scripts\probe-board.ps1
 - UP 配置会持久化到 Flash，所以单纯重刷固件不会自动清掉旧配置。
 - `signCount` 现在通过独立 journal 持久化，比整区重写更合理，但还不是最终形态。
 
-如果你准备把固件打包分享给其他人，请先读完 [docs/security.md](docs/security.md) 和 [docs/release.md](docs/release.md)。
+如果你准备把固件打包分享给其他人，请先读完 [docs/security.md](docs/security.md)、[docs/release.md](docs/release.md) 和 [docs/secure-firmware-flashing.md](docs/secure-firmware-flashing.md)。
