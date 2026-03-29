@@ -60,6 +60,13 @@ The current GitHub Actions release workflow expects the environment secret:
 
 That value must be the base64-encoded contents of an `RSA` or `EC` private key in PEM form. The workflow decodes it into `${{ github.workspace }}/.cache/meowkey-secureboot.pem`, validates that the key is `RSA` or `EC`, and then enables the secure-boot-ready package set. Do not keep this as a repository-wide secret if you want release-environment protection rules to apply.
 
+For the WinUI manager driver package, release-time signing also expects:
+
+- `MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_B64`
+- `MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_PASSWORD`
+
+`MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_B64` must be the base64-encoded `.pfx` payload for your trusted code-signing certificate private key. When provided, the workflow decodes it on the runner, re-generates the driver catalog from the current `INF`, and signs it during packaging.
+
 Example commands:
 
 ```bash
@@ -217,6 +224,13 @@ Windows 上的桌面工具检查：
 - `MEOWKEY_SECUREBOOT_PEM_B64`
 
 它的值需要是 `RSA` 或 `EC` 私钥 PEM 内容的 base64 编码。workflow 会先把它解码到 `${{ github.workspace }}/.cache/meowkey-secureboot.pem`，校验算法确实属于 `RSA` 或 `EC`，然后才会启用 secure-boot-ready 这一组发布包。如果你希望 release 环境的审批或访问控制真正生效，就不应把它继续保留为仓库级 secret。
+
+对于 WinUI 管理器驱动包，发布时自动签名还需要：
+
+- `MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_B64`
+- `MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_PASSWORD`
+
+其中 `MEOWKEY_MANAGER_DRIVER_SIGNING_PFX_B64` 需要是受信任代码签名证书私钥 `.pfx` 内容的 base64 编码。配置后，workflow 会在 runner 上解码该证书，并在打包阶段基于当前 `INF` 重新生成驱动目录文件并签名。
 
 示例命令：
 

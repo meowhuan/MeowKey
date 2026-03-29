@@ -1,5 +1,7 @@
 param(
-    [string]$CertSubject = "CN=MeowKey Manager Driver Test"
+    [string]$CertSubject = "CN=MeowKey Manager Driver Test",
+    [string]$PfxPath = "",
+    [string]$PfxPassword = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,4 +61,17 @@ if (-not (Test-Path $catPath)) {
 }
 
 Write-Host "[driver] signing catalog"
-& $signtoolPath sign /fd SHA256 /n $CertSubject $catPath
+if ($PfxPath) {
+    if (-not (Test-Path $PfxPath)) {
+        throw "PFX file not found: $PfxPath"
+    }
+
+    $signArgs = @("sign", "/fd", "SHA256", "/f", $PfxPath)
+    if ($PfxPassword) {
+        $signArgs += @("/p", $PfxPassword)
+    }
+    $signArgs += $catPath
+    & $signtoolPath @signArgs
+} else {
+    & $signtoolPath sign /fd SHA256 /n $CertSubject $catPath
+}
