@@ -102,6 +102,8 @@ jobs:
 
   manager-winui-driver-sign:
     runs-on: windows-latest
+    environment:
+      name: release
     steps:
       - uses: actions/checkout@v4
 
