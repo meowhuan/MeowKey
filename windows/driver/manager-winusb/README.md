@@ -25,6 +25,12 @@ CI/release signing with a PFX is also supported:
 pwsh .\sign-manager-driver.ps1 -PfxPath .\driver-signing.pfx -PfxPassword "<password>"
 ```
 
+If your environment does not include `Inf2Cat.exe`, you can sign the existing catalog without regeneration:
+
+```powershell
+pwsh .\sign-manager-driver.ps1 -PfxPath .\driver-signing.pfx -PfxPassword "<password>" -SkipCatalogGeneration
+```
+
 Important:
 
 - Right-click `INF` install only works when `meowkey-manager-winusb.cat` is properly signed and trusted on the current machine.
@@ -57,6 +63,12 @@ pwsh .\install-manager-driver.ps1
 
 ```powershell
 pwsh .\sign-manager-driver.ps1 -PfxPath .\driver-signing.pfx -PfxPassword "<password>"
+```
+
+如果环境里没有 `Inf2Cat.exe`，也可以跳过重建目录文件，仅对现有目录文件签名：
+
+```powershell
+pwsh .\sign-manager-driver.ps1 -PfxPath .\driver-signing.pfx -PfxPassword "<password>" -SkipCatalogGeneration
 ```
 
 注意：

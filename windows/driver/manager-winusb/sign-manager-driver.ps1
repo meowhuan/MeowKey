@@ -1,7 +1,8 @@
 param(
     [string]$CertSubject = "CN=MeowKey Manager Driver Test",
     [string]$PfxPath = "",
-    [string]$PfxPassword = ""
+    [string]$PfxPassword = "",
+    [switch]$SkipCatalogGeneration
 )
 
 $ErrorActionPreference = "Stop"
@@ -43,6 +44,11 @@ function Get-WindowsKitBinary {
         }
     }
 
+    $command = Get-Command $FileName -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($command) {
+        return $command.Source
+    }
+
     throw "$FileName was not found under the Windows Kits 10 bin directory. Install the WDK/SDK tools or pass them via PATH."
 }
 
@@ -50,14 +56,21 @@ if (-not (Test-Path $infPath)) {
     throw "Driver INF not found: $infPath"
 }
 
-$inf2catPath = Get-WindowsKitBinary -FileName "Inf2Cat.exe" -Architectures @("x86", "x64", "arm64")
 $signtoolPath = Get-WindowsKitBinary -FileName "signtool.exe" -Architectures @("x64", "x86", "arm64")
 
-Write-Host "[driver] generating catalog"
-& $inf2catPath /driver:$driverDir /os:10_X64
+if ($SkipCatalogGeneration) {
+    Write-Host "[driver] skipping catalog generation"
+} else {
+    $inf2catPath = Get-WindowsKitBinary -FileName "Inf2Cat.exe" -Architectures @("x86", "x64", "arm64")
+    Write-Host "[driver] generating catalog"
+    & $inf2catPath /driver:$driverDir /os:10_X64
+    if ($LASTEXITCODE -ne 0) {
+        throw "Inf2Cat failed with exit code $LASTEXITCODE."
+    }
+}
 
 if (-not (Test-Path $catPath)) {
-    throw "Catalog was not generated: $catPath"
+    throw "Catalog is missing: $catPath"
 }
 
 Write-Host "[driver] signing catalog"
@@ -74,4 +87,7 @@ if ($PfxPath) {
     & $signtoolPath @signArgs
 } else {
     & $signtoolPath sign /fd SHA256 /n $CertSubject $catPath
+}
+if ($LASTEXITCODE -ne 0) {
+    throw "signtool failed with exit code $LASTEXITCODE."
 }

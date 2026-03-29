@@ -192,7 +192,11 @@ jobs:
 
           powershell -ExecutionPolicy Bypass -File .\windows\driver\manager-winusb\sign-manager-driver.ps1 `
             -PfxPath $driverPfxPath `
-            -PfxPassword $pfxPassword
+            -PfxPassword $pfxPassword `
+            -SkipCatalogGeneration
+          if ($LASTEXITCODE -ne 0) {
+            throw "sign-manager-driver.ps1 failed with exit code $LASTEXITCODE."
+          }
 
           if (-not (Test-Path $driverCatPath)) {
             throw "Driver catalog missing after signing: $driverCatPath"
